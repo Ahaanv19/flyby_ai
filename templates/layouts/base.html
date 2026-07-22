@@ -1,104 +1,131 @@
-<!-- Custom file for standardizing Project Data
-This HTML is setup as as a Jinja2 layout, coders use layouts for:
- ... standardization of style
- ... setting expectations for data
- ... code reuse
--->
+<!-- Flyby AI — base layout for the operations console.
+     Every console page extends this: it sets the shared shell, the design
+     tokens (mirrored from the React app so the two read as one product), and
+     the navigation bar. -->
 <!DOCTYPE HTML>
 <html lang="en">
 
-{% set basename = "Macro Cosmos" %}
-{% set github = "https://github.com/nighthawkcoders" %}
-{% set twitter = "https://twitter.com/NighthawkCoding" %}
-{% set youtube = "https://www.youtube.com/channel/UClIKOsDS5dsfzFA3zveDT3Q?view_as=subscriber" %}
+{% set basename = "Flyby AI" %}
+{% set tagline = "Corporate travel, without the chaos." %}
 
 <head>
-    <!-- Required meta tags -->
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <!-- JQuery -->
-    <script type="text/javascript" language="javascript" src="https://code.jquery.com/jquery-3.5.1.js"></script>
-    <script type="text/javascript" language="javascript" src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    {% block head %}{% endblock %}
 
-    <!-- Bootstrap JavaScript -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
-    <script type="text/javascript" language="javascript" src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
-
-    {% block head %}
-    {% endblock %}
-      
     <style>
-        .navbar {
-            position: static;
-            z-index: 9999;
+        /* Design tokens mirrored from the Flyby AI app (src/index.css): deep
+           navy surfaces, amber accent, and the logo's CTA blue. */
+        :root {
+            --fly-bg: #0b1220;
+            --fly-surface: #111a2e;
+            --fly-surface-2: #16213a;
+            --fly-border: rgba(148, 163, 184, .16);
+            --fly-border-strong: rgba(148, 163, 184, .28);
+            --fly-text: #e8eefc;
+            --fly-muted: #94a3b8;
+            --fly-accent: #f59e0b;
+            --fly-cta: #7ba1d4;
+            --fly-success: #22c55e;
+            --fly-danger: #f87171;
         }
-        /* Dark, premium animated "aurora" background — replaces the old blue
-           Vanta waves. Baked into the layout so every page (even ones that
-           override the background block) stays dark and the light UI reads. */
-        html, body { background: #070f1c; }
-        body { color: #e8f1fb; }
-        #body_background {
-            position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1;
-            overflow: hidden; background: #070f1c;
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--fly-bg);
+            color: var(--fly-text);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            -webkit-font-smoothing: antialiased;
         }
-        #body_background::before, #body_background::after {
+
+        /* Ambient wash — pure CSS, so there is no script that can fail to load
+           and leave the page flat. */
+        #fly-backdrop {
+            position: fixed; inset: 0; z-index: -1; overflow: hidden;
+            background: var(--fly-bg);
+        }
+        #fly-backdrop::before {
             content: ''; position: absolute; inset: -30%;
-            background-repeat: no-repeat; filter: blur(72px); will-change: transform;
-        }
-        #body_background::before {
             background:
-              radial-gradient(closest-side, rgba(18,176,204,.34), transparent 70%) 12% 18% / 46% 46%,
-              radial-gradient(closest-side, rgba(10,124,194,.32), transparent 70%) 82% 8%  / 42% 42%,
-              radial-gradient(closest-side, rgba(124,77,255,.22), transparent 70%) 78% 88% / 40% 40%;
-            animation: mcAurora1 26s ease-in-out infinite alternate;
+              radial-gradient(closest-side, rgba(123, 161, 212, .20), transparent 70%) 14% 14% / 48% 48%,
+              radial-gradient(closest-side, rgba(245, 158, 11, .12), transparent 70%) 84% 10% / 40% 40%,
+              radial-gradient(closest-side, rgba(56, 89, 148, .22), transparent 70%) 72% 86% / 44% 44%;
+            filter: blur(70px);
+            animation: flyDrift 30s ease-in-out infinite alternate;
         }
-        #body_background::after {
-            background:
-              radial-gradient(closest-side, rgba(16,185,129,.18), transparent 70%) 20% 88% / 40% 40%,
-              radial-gradient(closest-side, rgba(18,176,204,.20), transparent 70%) 60% 42% / 44% 44%;
-            animation: mcAurora2 34s ease-in-out infinite alternate;
-        }
-        @keyframes mcAurora1 {
-            0%   { transform: translate3d(-2%,-1%,0) scale(1); }
-            100% { transform: translate3d(3%,2%,0) scale(1.12); }
-        }
-        @keyframes mcAurora2 {
-            0%   { transform: translate3d(2%,1%,0) scale(1.05); }
-            100% { transform: translate3d(-3%,-2%,0) scale(1); }
+        @keyframes flyDrift {
+            0%   { transform: translate3d(-2%, -1%, 0) scale(1); }
+            100% { transform: translate3d(3%, 2%, 0) scale(1.1); }
         }
         @media (prefers-reduced-motion: reduce) {
-            #body_background::before, #body_background::after { animation: none; }
+            #fly-backdrop::before { animation: none; }
         }
+
+        a { color: var(--fly-cta); }
+
+        .fly-wrap { max-width: 1180px; margin: 0 auto; padding: 2.6rem 1.25rem 4rem; }
+
+        /* Shared surface used by cards, panels and tables. */
+        .fly-panel {
+            background: rgba(17, 26, 46, .72);
+            border: 1px solid var(--fly-border);
+            border-radius: 20px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 36px 70px -44px rgba(0, 0, 0, .85);
+        }
+
+        .fly-btn {
+            display: inline-flex; align-items: center; gap: .5rem;
+            padding: .72rem 1.2rem; border: none; border-radius: 12px;
+            font-family: inherit; font-weight: 700; font-size: .94rem;
+            color: #0b1220; cursor: pointer; text-decoration: none;
+            background: linear-gradient(135deg, var(--fly-accent), #fbbf24);
+            box-shadow: 0 14px 30px -14px rgba(245, 158, 11, .85);
+            transition: transform .16s ease, box-shadow .16s ease;
+        }
+        .fly-btn:hover { transform: translateY(-1px); box-shadow: 0 18px 36px -14px rgba(245, 158, 11, .95); }
+
+        .fly-btn-ghost {
+            background: rgba(255, 255, 255, .05);
+            border: 1px solid var(--fly-border-strong);
+            color: var(--fly-text);
+            box-shadow: none;
+        }
+        .fly-btn-ghost:hover { background: rgba(255, 255, 255, .09); box-shadow: none; }
+
+        .fly-badge {
+            display: inline-flex; align-items: center; gap: .4rem;
+            padding: .25rem .6rem; border-radius: 999px;
+            font-size: .74rem; font-weight: 700; letter-spacing: .02em;
+        }
+        .fly-badge.ok    { color: #bbf7d0; background: rgba(34, 197, 94, .13); border: 1px solid rgba(34, 197, 94, .32); }
+        .fly-badge.warn  { color: #fde68a; background: rgba(245, 158, 11, .13); border: 1px solid rgba(245, 158, 11, .32); }
+        .fly-badge.muted { color: var(--fly-muted); background: rgba(148, 163, 184, .1); border: 1px solid var(--fly-border); }
+        .fly-badge.admin { color: #dbeafe; background: rgba(123, 161, 212, .16); border: 1px solid rgba(123, 161, 212, .38); }
     </style>
-    {% block style %}
-    {% endblock %}
 
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/macro-cosmos-logo.png') }}">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='assets/macro-cosmos-logo-full.png') }}">
+    {% block style %}{% endblock %}
 
-    <title>{{ basename }} | {{ project }} </title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/flyby-logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='assets/flyby-logo.png') }}">
 
+    <title>{{ basename }} · {{ project }}</title>
 </head>
 
 <body>
-    <div id="body_background"></div>
+    <div id="fly-backdrop"></div>
 
     {% include "layouts/navbar.html" %}
 
-    {% block body %}
-    {% endblock %}
-
+    {% block body %}{% endblock %}
 </body>
-
-{% block background %}
-    <!-- Animated background is now pure CSS (#body_background aurora above) —
-         no Vanta/three.js dependency, so it can never fail to load. -->
-{% endblock %}
 
 </html>

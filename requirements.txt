@@ -1,25 +1,28 @@
+# Flyby AI — backend dependencies
+#
+# Install with:  pip install -r requirements.txt
+
+# Core web framework
 Flask
-requests
+Flask-Cors
+Flask-Login
+Flask-SQLAlchemy
+Flask-Migrate
 SQLAlchemy
 Werkzeug
-Flask_Login
-Flask_SqlAlchemy
-Flask_Migrate
-Flask_Restful
-Flask_Cors
+
+# Auth tokens
 PyJWT
-pandas
-numpy
-matplotlib
-seaborn
-scikit-learn
-pymysql
-psycopg2-binary
+
+# Configuration
 python-dotenv
-boto3
-stripe
-geopy
+
+# Security hardening (rate limiting, input sanitization) — see utils/security.py
 Flask-Limiter
 bleach
-pyotp
-webauthn
+
+# Outbound calls: SMS delivery for two-step verification, voice transcription
+requests
+
+# Production database driver (SQLite is used in development, no driver needed)
+pymysql

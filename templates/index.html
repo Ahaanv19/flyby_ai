@@ -1,171 +1,212 @@
 {% extends "layouts/base.html" %}
-{% set project = "Home" %}
+{% set project = "Overview" %}
+
+{#
+  The console landing page.
+
+  Shows what this service is, whether it's healthy, what is in the database
+  right now, and the API surface the Flyby AI frontend runs on — so anyone
+  opening the backend can tell at a glance that it's up and wired correctly.
+#}
 
 {% block style %}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --mc-ocean: #0a7cc2;
-    --mc-ocean-2: #12b0cc;
-    --mc-ink: #0b1524;
-    --mc-glass: rgba(13, 24, 42, 0.55);
-    --mc-glass-border: rgba(148, 197, 236, 0.18);
-    --mc-text: #e8f1fb;
-    --mc-muted: #9fb6cf;
-  }
-  body { font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-  .mc-wrap { max-width: 1180px; margin: 0 auto; padding: 3.2rem 1.25rem 4rem; }
-
-  .mc-hero { text-align: center; margin-bottom: 2.6rem; }
-  .mc-status {
+  .fly-hero { text-align: center; margin-bottom: 2.8rem; }
+  .fly-status {
     display: inline-flex; align-items: center; gap: .5rem;
-    padding: .4rem .9rem; border-radius: 999px; font-size: .78rem; font-weight: 700;
-    letter-spacing: .08em; text-transform: uppercase;
-    color: #b8f5d0; background: rgba(16, 185, 129, .12);
-    border: 1px solid rgba(16, 185, 129, .35); backdrop-filter: blur(8px);
+    padding: .4rem .9rem; border-radius: 999px;
+    font-size: .76rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+    color: #bbf7d0; background: rgba(34, 197, 94, .12);
+    border: 1px solid rgba(34, 197, 94, .34);
   }
-  .mc-status .dot { width: .55rem; height: .55rem; border-radius: 999px; background: #22c55e;
-    box-shadow: 0 0 0 0 rgba(34,197,94,.6); animation: mcpulse 2.4s infinite; }
-  @keyframes mcpulse { 0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)} 70%{box-shadow:0 0 0 .6rem rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
+  .fly-status .dot {
+    width: .55rem; height: .55rem; border-radius: 999px; background: var(--fly-success);
+    animation: flyPulse 2.4s infinite;
+  }
+  @keyframes flyPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); }
+    70%  { box-shadow: 0 0 0 .6rem rgba(34, 197, 94, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+  }
 
-  .mc-title {
-    font-family: 'Fraunces', Georgia, serif; font-weight: 700;
-    font-size: clamp(2.6rem, 6vw, 4.6rem); line-height: 1.02; margin: 1.1rem 0 .5rem;
-    background: linear-gradient(120deg, #ffffff 0%, #bfe6ff 40%, var(--mc-ocean-2) 100%);
+  .fly-title {
+    font-weight: 800; font-size: clamp(2.3rem, 5.5vw, 3.6rem);
+    line-height: 1.05; letter-spacing: -.03em; margin: 1.1rem 0 .6rem;
+    background: linear-gradient(120deg, #ffffff 0%, #cddffb 45%, var(--fly-cta) 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-    letter-spacing: -.02em;
   }
-  .mc-sub { color: var(--mc-muted); font-size: 1.08rem; max-width: 44rem; margin: 0 auto; line-height: 1.6; }
+  .fly-sub { color: var(--fly-muted); font-size: 1.05rem; max-width: 42rem; margin: 0 auto; line-height: 1.6; }
+  .fly-hero-actions { display: flex; gap: .7rem; justify-content: center; margin-top: 1.6rem; flex-wrap: wrap; }
 
-  .mc-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 2.4rem 0; }
-  .mc-stat {
-    padding: 1.15rem 1.25rem; border-radius: 18px; background: var(--mc-glass);
-    border: 1px solid var(--mc-glass-border); backdrop-filter: blur(14px);
-    box-shadow: 0 24px 50px -34px rgba(0,0,0,.7);
+  .fly-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .9rem; margin-bottom: 2.4rem;
   }
-  .mc-stat .k { font-size: 1.6rem; font-weight: 800; color: #fff; letter-spacing: -.02em; }
-  .mc-stat .l { color: var(--mc-muted); font-size: .8rem; margin-top: .15rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-  .mc-stat .k small { font-size: .9rem; color: var(--mc-ocean-2); font-weight: 700; }
-
-  .mc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.15rem; }
-  .mc-card {
-    position: relative; overflow: hidden; padding: 1.6rem; border-radius: 22px;
-    background: var(--mc-glass); border: 1px solid var(--mc-glass-border);
-    backdrop-filter: blur(16px); box-shadow: 0 30px 60px -40px rgba(0,0,0,.75);
-    transition: transform .28s cubic-bezier(.22,1,.36,1), border-color .28s, box-shadow .28s;
+  .fly-stat { padding: 1.15rem 1.25rem; }
+  .fly-stat .n {
+    font-size: 1.9rem; font-weight: 800; letter-spacing: -.02em;
+    line-height: 1; margin-bottom: .35rem;
   }
-  .mc-card::before { content:''; position:absolute; inset:0 0 auto; height:3px;
-    background: linear-gradient(90deg, var(--mc-ocean), var(--mc-ocean-2)); opacity:.85; }
-  .mc-card:hover { transform: translateY(-6px); border-color: rgba(18,176,204,.45);
-    box-shadow: 0 40px 70px -38px rgba(10,124,194,.55); }
-  .mc-ico {
-    width: 46px; height: 46px; border-radius: 13px; display:flex; align-items:center; justify-content:center;
-    font-size: 1.25rem; color:#fff; margin-bottom: 1rem;
-    background: linear-gradient(135deg, var(--mc-ocean), var(--mc-ocean-2));
-    box-shadow: 0 12px 24px -12px rgba(10,124,194,.8);
+  .fly-stat .l { color: var(--fly-muted); font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+
+  .fly-section-title {
+    font-size: 1.15rem; font-weight: 800; margin: 0 0 .3rem;
+    letter-spacing: -.01em;
   }
-  .mc-card h3 { color:#fff; font-size: 1.12rem; font-weight: 700; margin: 0 0 .55rem; }
-  .mc-card p, .mc-card li { color: var(--mc-muted); font-size: .92rem; line-height: 1.6; }
-  .mc-card ul { padding-left: 1.1rem; margin: 0; }
-  .mc-card li { margin-bottom: .3rem; }
+  .fly-section-sub { color: var(--fly-muted); font-size: .92rem; margin: 0 0 1.1rem; }
 
-  .mc-section-label { color: var(--mc-ocean-2); font-weight: 700; text-transform: uppercase;
-    letter-spacing: .12em; font-size: .78rem; margin: 2.6rem 0 1rem; }
+  .fly-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+  .fly-card { padding: 1.4rem 1.5rem; }
+  .fly-card h3 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 800; display: flex; align-items: center; gap: .5rem; }
+  .fly-card p { margin: 0 0 .9rem; color: var(--fly-muted); font-size: .89rem; line-height: 1.55; }
 
-  .mc-pills { display:flex; flex-wrap:wrap; gap:.55rem; }
-  .mc-pill { padding:.5rem .9rem; border-radius: 999px; font-size:.82rem; font-weight:600;
-    color: var(--mc-text); background: rgba(255,255,255,.06); border:1px solid var(--mc-glass-border); }
-
-  .mc-btn {
-    display:inline-flex; align-items:center; gap:.5rem; padding:.7rem 1.2rem; border-radius: 13px;
-    font-weight: 700; font-size:.92rem; text-decoration:none; transition: transform .2s, box-shadow .2s;
+  .fly-routes { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+  .fly-routes li { display: flex; align-items: baseline; gap: .6rem; font-size: .84rem; }
+  .fly-routes code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #cddffb; background: rgba(123, 161, 212, .12);
+    border: 1px solid rgba(123, 161, 212, .2);
+    padding: .12rem .45rem; border-radius: 6px; white-space: nowrap;
   }
-  .mc-btn-primary { color:#fff; background: linear-gradient(135deg, var(--mc-ocean), var(--mc-ocean-2));
-    box-shadow: 0 14px 30px -14px rgba(10,124,194,.85); }
-  .mc-btn-ghost { color: var(--mc-text); background: rgba(255,255,255,.06); border:1px solid var(--mc-glass-border); }
-  .mc-btn:hover { transform: translateY(-2px); }
+  .fly-routes span { color: var(--fly-muted); }
 
-  .mc-team { display:flex; gap:.8rem; flex-wrap:wrap; }
-  .mc-member { display:flex; align-items:center; gap:.7rem; padding:.7rem 1rem; border-radius: 14px;
-    background: rgba(255,255,255,.05); border:1px solid var(--mc-glass-border); }
-  .mc-avatar { width:38px; height:38px; border-radius:999px; display:flex; align-items:center; justify-content:center;
-    font-weight:800; color:#fff; background: linear-gradient(135deg, var(--mc-ocean), var(--mc-ocean-2)); }
-  .mc-member .n { color:#fff; font-weight:700; font-size:.95rem; }
-  .mc-member .r { color: var(--mc-muted); font-size:.78rem; }
-
-  @media (max-width: 900px) { .mc-stats { grid-template-columns: repeat(2,1fr); } .mc-grid { grid-template-columns: 1fr; } }
-  @media (max-width: 520px) { .mc-stats { grid-template-columns: 1fr; } }
+  .fly-note {
+    margin-top: 2.2rem; padding: 1.2rem 1.4rem;
+    border-left: 3px solid var(--fly-accent);
+    background: rgba(245, 158, 11, .07);
+    border-radius: 0 14px 14px 0;
+    font-size: .89rem; color: #fde9c4; line-height: 1.6;
+  }
+  .fly-note code { color: #fff; background: rgba(0,0,0,.25); padding: .1rem .4rem; border-radius: 5px; }
 </style>
 {% endblock %}
 
 {% block body %}
-<div class="mc-wrap">
+<div class="fly-wrap">
 
-  <div class="mc-hero">
-    <img src="{{ url_for('static', filename='assets/macro-cosmos-logo-full.png') }}" alt="Macro Cosmos"
-         style="width:104px;height:104px;border-radius:24px;display:block;margin:0 auto 1.2rem;box-shadow:0 22px 48px -20px rgba(10,124,194,.6);">
-    <span class="mc-status"><span class="dot"></span> All systems operational</span>
-    <h1 class="mc-title">Macro Cosmos</h1>
-    <p class="mc-sub">The control center powering smart routing and live traffic intelligence across
-      San Diego, San Francisco &amp; Alameda — real-time data, AI-assisted routing, and a secure API.</p>
-    <div style="margin-top:1.6rem; display:flex; gap:.7rem; justify-content:center; flex-wrap:wrap;">
-      <a href="https://macro-cosmos.netlify.app" class="mc-btn mc-btn-primary"><i class="fa fa-external-link"></i> Open the App</a>
-      <a href="{{ url_for('utable') }}" class="mc-btn mc-btn-ghost"><i class="fa fa-users"></i> User Management</a>
+  <div class="fly-hero">
+    <span class="fly-status"><span class="dot"></span> Backend online</span>
+    <h1 class="fly-title">Flyby AI Backend</h1>
+    <p class="fly-sub">
+      The API behind Flyby AI — authentication, trips, expenses, conversations,
+      travel policy and search. Built on Flask and SQLite, serving the React app
+      on <strong>port 8080</strong> from <strong>port 8659</strong>.
+    </p>
+    <div class="fly-hero-actions">
+      <a class="fly-btn" href="http://localhost:8080">Open the app</a>
+      {% if current_user.is_authenticated and current_user.is_admin() %}
+        <a class="fly-btn fly-btn-ghost" href="{{ url_for('utable') }}">Manage accounts</a>
+      {% elif not current_user.is_authenticated %}
+        <a class="fly-btn fly-btn-ghost" href="{{ url_for('login') }}">Sign in to the console</a>
+      {% endif %}
     </div>
   </div>
 
-  <div class="mc-stats">
-    <div class="mc-stat"><div class="k">3</div><div class="l">Regions Covered</div></div>
-    <div class="mc-stat"><div class="k">Live<small> · 5 min</small></div><div class="l">Traffic Refresh</div></div>
-    <div class="mc-stat"><div class="k">REST</div><div class="l">Secure API</div></div>
-    <div class="mc-stat"><div class="k">99.9<small>%</small></div><div class="l">Uptime Target</div></div>
+  <div class="fly-stats">
+    <div class="fly-panel fly-stat">
+      <div class="n" style="color: var(--fly-cta);">{{ stats.users }}</div>
+      <div class="l">Accounts</div>
+    </div>
+    <div class="fly-panel fly-stat">
+      <div class="n" style="color: var(--fly-accent);">{{ stats.trips }}</div>
+      <div class="l">Trips</div>
+    </div>
+    <div class="fly-panel fly-stat">
+      <div class="n" style="color: #a5b4fc;">{{ stats.expenses }}</div>
+      <div class="l">Expenses</div>
+    </div>
+    <div class="fly-panel fly-stat">
+      <div class="n" style="color: #6ee7b7;">{{ stats.companies }}</div>
+      <div class="l">Workspaces</div>
+    </div>
+    <div class="fly-panel fly-stat">
+      <div class="n" style="color: #f9a8d4;">{{ stats.chats }}</div>
+      <div class="l">Conversations</div>
+    </div>
+    <div class="fly-panel fly-stat">
+      <div class="n" style="color: #93c5fd;">{{ stats.sessions }}</div>
+      <div class="l">Active sessions</div>
+    </div>
   </div>
 
-  <div class="mc-grid">
-    <div class="mc-card">
-      <div class="mc-ico"><i class="fa fa-map-o"></i></div>
-      <h3>What it powers</h3>
-      <ul>
-        <li>Real-time mapping with high accuracy</li>
-        <li>AI-driven traffic &amp; congestion analysis</li>
-        <li>Predictive, traffic-aware routing</li>
-        <li>Interactive route display &amp; travel modes</li>
-        <li>Live incident &amp; hazard reporting</li>
+  <h2 class="fly-section-title">API surface</h2>
+  <p class="fly-section-sub">Everything the frontend calls, grouped by what it does.</p>
+
+  <div class="fly-grid">
+    <div class="fly-panel fly-card">
+      <h3>🔐 Authentication</h3>
+      <p>Sign-up, sign-in, token refresh and password recovery. One account works in both the app and this console.</p>
+      <ul class="fly-routes">
+        <li><code>POST /auth/v1/signup</code></li>
+        <li><code>POST /auth/v1/token</code> <span>password &amp; refresh grants</span></li>
+        <li><code>GET&nbsp;&nbsp;/auth/v1/user</code></li>
+        <li><code>POST /auth/v1/recover</code></li>
       </ul>
     </div>
-    <div class="mc-card">
-      <div class="mc-ico"><i class="fa fa-cogs"></i></div>
-      <h3>Engineering</h3>
-      <p>Flask REST API with JWT + passkey auth, rate limiting, RBAC, and audit logging. Traffic engine blends
-         city open-data, county road networks, and live regional feeds.</p>
-      <div class="mc-pills" style="margin-top:.9rem;">
-        <span class="mc-pill">Flask</span><span class="mc-pill">SQLAlchemy</span>
-        <span class="mc-pill">JWT + Passkeys</span><span class="mc-pill">Stripe</span>
-        <span class="mc-pill">511 / MTC</span>
-      </div>
+
+    <div class="fly-panel fly-card">
+      <h3>🗄️ Data</h3>
+      <p>One query layer over every table. Each request is scoped to the signed-in user server-side.</p>
+      <ul class="fly-routes">
+        <li><code>POST /rest/v1/&lt;table&gt;/select</code></li>
+        <li><code>POST /rest/v1/&lt;table&gt;/insert</code></li>
+        <li><code>POST /rest/v1/&lt;table&gt;/update</code></li>
+        <li><code>POST /rest/v1/rpc/&lt;name&gt;</code></li>
+      </ul>
     </div>
-    <div class="mc-card">
-      <div class="mc-ico"><i class="fa fa-shield"></i></div>
-      <h3>Operations</h3>
-      <p>Manage users, roles, and subscription plans from one console. Every admin action is audited.</p>
-      <div style="margin-top:1rem; display:flex; gap:.55rem; flex-wrap:wrap;">
-        <a href="{{ url_for('utable') }}" class="mc-btn mc-btn-primary" style="padding:.55rem 1rem;"><i class="fa fa-users-cog"></i> Manage Users</a>
-      </div>
+
+    <div class="fly-panel fly-card">
+      <h3>✈️ Features</h3>
+      <p>Trips, expenses, conversations, notifications, itineraries and traveler preferences.</p>
+      <ul class="fly-routes">
+        <li><code>GET|PUT /api/trips</code></li>
+        <li><code>GET|PUT /api/expenses</code></li>
+        <li><code>GET|PUT /api/chats</code></li>
+        <li><code>GET|PUT /api/preferences</code></li>
+      </ul>
+    </div>
+
+    <div class="fly-panel fly-card">
+      <h3>⚙️ Services</h3>
+      <p>Two-step verification, travel inventory search, and voice transcription.</p>
+      <ul class="fly-routes">
+        <li><code>GET&nbsp;&nbsp;/functions/v1/search-travel</code></li>
+        <li><code>POST /functions/v1/twofa-send-sms</code></li>
+        <li><code>POST /functions/v1/twofa-verify-sms</code></li>
+        <li><code>POST /functions/v1/transcribe</code></li>
+      </ul>
+    </div>
+
+    <div class="fly-panel fly-card">
+      <h3>📎 Storage</h3>
+      <p>Avatars and receipts. Uploads land in the uploader's own folder, enforced from the session.</p>
+      <ul class="fly-routes">
+        <li><code>POST&nbsp;&nbsp;/storage/v1/object/&lt;bucket&gt;/&lt;key&gt;</code></li>
+        <li><code>GET&nbsp;&nbsp;&nbsp;/storage/v1/object/public/…</code></li>
+        <li><code>DELETE /storage/v1/object/&lt;bucket&gt;</code></li>
+      </ul>
+    </div>
+
+    <div class="fly-panel fly-card">
+      <h3>🩺 Operations</h3>
+      <p>Health checks and the account console for administrators.</p>
+      <ul class="fly-routes">
+        <li><code>GET /health</code> <span>service + database</span></li>
+        <li><code>GET /api/health</code></li>
+        <li><code>GET /users/table</code> <span>admin only</span></li>
+      </ul>
     </div>
   </div>
 
-  <div class="mc-section-label">The Team</div>
-  <div class="mc-team">
-    <div class="mc-member"><div class="mc-avatar">A</div><div><div class="n">Ahaan</div><div class="r">Frontend, Backend, Business Management  &amp; AI</div></div></div>
-    <div class="mc-member"><div class="mc-avatar">R</div><div><div class="n">Rudransh</div><div class="r">Marketing and Cybersecurity</div></div></div>
+  {% if not current_user.is_authenticated %}
+  <div class="fly-note">
+    <strong>Local development.</strong> Start the backend with <code>python main.py</code> and the
+    frontend with <code>make</code> from the <code>flyby</code> folder, then open
+    <code>http://localhost:8080</code>. The seeded accounts are
+    <code>admin@flyby.ai</code> and <code>demo@flyby.ai</code> — the password comes from
+    <code>DEFAULT_PASSWORD</code> in the backend <code>.env</code>.
   </div>
-
-  <div class="mc-section-label">Repositories</div>
-  <div class="mc-pills">
-    <a href="https://github.com/Ahaanv19/Macro_Cosmos_Frontend" class="mc-pill" style="text-decoration:none;"><i class="fa fa-github"></i> Frontend</a>
-    <a href="https://github.com/Ahaanv19/Macro_Cosmos_Backend" class="mc-pill" style="text-decoration:none;"><i class="fa fa-github"></i> Backend</a>
-  </div>
+  {% endif %}
 
 </div>
 {% endblock %}
