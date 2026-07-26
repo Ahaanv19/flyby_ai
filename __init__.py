@@ -139,6 +139,11 @@ os.makedirs(app.config['STORAGE_FOLDER'], exist_ok=True)
 # Travel search, transcription and SMS all fall back to deterministic local
 # implementations when these are unset, so the app is fully usable offline.
 app.config['GEMINI_API_KEY'] = os.environ.get('GEMINI_API_KEY') or None
+app.config['GEMINI_SERVER'] = (
+    os.environ.get('GEMINI_SERVER')
+    or 'https://generativelanguage.googleapis.com/v1beta/models/'
+       'gemini-flash-latest:generateContent'
+)
 app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID') or None
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN') or None

@@ -27,6 +27,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 from __init__ import db
 from api.jwt_authorize import token_required
 from api.travel_search import search as run_travel_search
+from api.trip_reasoning import reason_about_trip
 from model.base import new_uuid, utcnow
 from model.mfa import MfaCredential, PendingVerification
 from model.security import AuditLog, TwoFactorAuditLog, mask_phone
@@ -317,6 +318,40 @@ def search_travel():
         date=date,
     )
     return jsonify(results), 200
+
+
+# ---------------------------------------------------------------------------
+# Trip reasoning
+# ---------------------------------------------------------------------------
+
+@functions_api.route('/trip-reasoning', methods=['POST'])
+@token_required()
+def trip_reasoning():
+    """
+    Score a planned trip and explain the plan.
+
+    Returns the four-panel ``TripAIReasoning`` object the app renders. Policy
+    compliance is judged against the caller's own company travel policy, looked
+    up here so the client can't spoof a more lenient one. Uses Gemini when a key
+    is configured and falls back to a deterministic local analysis otherwise, so
+    a result always comes back.
+    """
+    trip = request.get_json(silent=True) or {}
+    if not isinstance(trip, dict):
+        return jsonify({"error": "Expected a trip object."}), 400
+
+    # Ground policy compliance in the caller's real policy, not anything they send.
+    policy = None
+    profile = g.current_user.profile
+    company_id = profile.company_id if profile else None
+    if company_id:
+        from model.company import TravelPolicy
+        row = TravelPolicy.for_company(company_id)
+        if row:
+            policy = row.read()
+
+    reasoning, engine = reason_about_trip(trip, policy)
+    return jsonify({"reasoning": reasoning, "engine": engine}), 200
 
 
 # ---------------------------------------------------------------------------
