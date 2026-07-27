@@ -28,6 +28,7 @@ from __init__ import db
 from api.jwt_authorize import token_required
 from api.travel_search import search as run_travel_search
 from api.trip_reasoning import reason_about_trip
+from api.nl_search import parse_search as run_parse_search
 from model.base import new_uuid, utcnow
 from model.mfa import MfaCredential, PendingVerification
 from model.security import AuditLog, TwoFactorAuditLog, mask_phone
@@ -318,6 +319,30 @@ def search_travel():
         date=date,
     )
     return jsonify(results), 200
+
+
+# ---------------------------------------------------------------------------
+# Natural-language search parsing
+# ---------------------------------------------------------------------------
+
+@functions_api.route('/parse-search', methods=['POST'])
+@token_required()
+def parse_search():
+    """
+    Parse a free-text travel request into structured primitives.
+
+    Returns ``{parsed: {...}, engine: "gemini"}`` when Gemini understood the
+    request, or ``{parsed: null, engine: "fallback"}`` otherwise — in which case
+    the frontend uses its built-in heuristic parser, so search always works.
+    """
+    data = request.get_json(silent=True) or {}
+    text = _clean(data.get("text") or data.get("q"), 400)
+
+    parsed = run_parse_search(text)
+    return jsonify({
+        "parsed": parsed,
+        "engine": "gemini" if parsed is not None else "fallback",
+    }), 200
 
 
 # ---------------------------------------------------------------------------

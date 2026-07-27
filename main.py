@@ -466,6 +466,17 @@ with app.app_context():
 
 # this runs the flask application on the development server
 if __name__ == "__main__":
+    import socket
+
+    # On bind, Werkzeug's dev server calls socket.getfqdn(host), which does a
+    # reverse-DNS lookup. On guest/captive/offline networks that lookup can hang
+    # for many seconds (or effectively forever), making startup look frozen —
+    # the server has already printed its banner but never finishes binding.
+    # A dev server has no need for the fully-qualified name, so we short-circuit
+    # it to skip the network round-trip entirely and start instantly anywhere.
+    socket.getfqdn = lambda name="": name or "localhost"
+
+    host = os.environ.get("FLASK_HOST") or "0.0.0.0"
     port = int(os.environ.get("FLASK_PORT") or 8659)
     print(f"\n  Flyby AI backend  ->  http://localhost:{port}\n")
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=True, host=host, port=port)

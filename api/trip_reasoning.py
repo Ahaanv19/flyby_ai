@@ -22,28 +22,12 @@ cap, hotel nightly cap, approval threshold), so the score reflects real limits
 rather than a guess.
 """
 
-import json
-import logging
-import re
-import time
-
-import requests
-from flask import current_app
-
-logger = logging.getLogger(__name__)
+from api.gemini import call_gemini
 
 # Score bands shared by the model prompt and the local fallback, so both speak
 # the same language in the UI.
 POSITIVE_LABELS = [(90, "Excellent"), (75, "High"), (55, "Good"), (35, "Fair"), (0, "Low")]
 RISK_LABELS = [(70, "High"), (45, "Medium"), (20, "Low"), (0, "Minimal")]
-
-
-def _gemini_key():
-    """Return a usable Gemini key, or None when unset/placeholder."""
-    key = (current_app.config.get("GEMINI_API_KEY") or "").strip()
-    if not key or key.lower() in ("xxxxx", "your_key_here"):
-        return None
-    return key
 
 
 def _label_for(score, risk=False):
@@ -143,62 +127,14 @@ def _describe_trip(trip):
 
 def _reason_with_gemini(trip, policy):
     """Call Gemini and return the parsed reasoning dict, or None on any failure."""
-    key = _gemini_key()
-    if not key:
+    parsed = call_gemini(
+        _build_prompt(trip, policy),
+        _describe_trip(trip),
+        max_output_tokens=4096,
+        temperature=0.6,
+    )
+    if parsed is None:
         return None
-
-    url = current_app.config["GEMINI_SERVER"]
-    # The key is passed in the x-goog-api-key header. The current Gemini API keys
-    # are not accepted as a ?key= query param, and Bearer auth expects an OAuth
-    # token rather than an API key.
-    headers = {"Content-Type": "application/json", "x-goog-api-key": key}
-    payload = {
-        "systemInstruction": {"parts": [{"text": _build_prompt(trip, policy)}]},
-        "contents": [{"role": "user", "parts": [{"text": _describe_trip(trip)}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.6,
-            # gemini-flash-lite-latest is a reasoning model that spends part of
-            # the budget on hidden thinking, so the ceiling is set high enough
-            # that the JSON answer still fits after the thoughts. (Disabling
-            # thinking outright — thinkingBudget 0 — is rejected by this model.)
-            "maxOutputTokens": 4096,
-        },
-    }
-
-    resp = None
-    # One quick retry on a transient overload, then fall back fast so the user
-    # never waits long — the local engine always yields a complete result.
-    for attempt in range(2):
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=15)
-        except requests.RequestException as error:
-            logger.warning("Gemini request failed (%s); using local reasoning", error)
-            return None
-        if resp.status_code == 200:
-            break
-        if resp.status_code in (429, 500, 502, 503):
-            logger.warning("Gemini transient %s (attempt %s)", resp.status_code, attempt + 1)
-            if attempt == 0:
-                time.sleep(0.4)
-            continue
-        logger.warning("Gemini returned %s: %s", resp.status_code, resp.text[:300])
-        return None
-
-    if resp is None or resp.status_code != 200:
-        return None
-
-    try:
-        data = resp.json()
-        parts = data["candidates"][0]["content"]["parts"]
-        text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
-        text = re.sub(r"^```json\s*", "", text.strip(), flags=re.I)
-        text = re.sub(r"```\s*$", "", text).strip()
-        parsed = json.loads(text)
-    except (KeyError, IndexError, ValueError) as error:
-        logger.warning("Gemini reasoning parse failed: %s", error)
-        return None
-
     return _normalize(parsed)
 
 
