@@ -306,26 +306,76 @@ def _preferences_client(prefs):
 @token_required()
 def team():
     """
-    List the people in the caller's workspace.
+    List the people in the caller's workspace and where each is traveling.
 
-    Only name, role and avatar are returned — enough to render the team views
-    without exposing teammates' contact details.
+    The Team view's whole purpose is "see where colleagues are traveling," so
+    each member is returned with their soonest current-or-upcoming trip
+    (destination + dates only). Contact details are never exposed.
     """
+    from datetime import date
+
     profile = g.current_user.profile
     company_id = profile.company_id if profile else None
     if not company_id:
         return jsonify({"members": []}), 200
 
     from model.user import Profile as ProfileModel
+    from model.trip import Trip
+
+    today = date.today()
     rows = ProfileModel.query.filter_by(_company_id=company_id).all()
-    members = [{
-        "id": row.user_id,
-        "name": row.full_name or row.email.split("@")[0],
-        "role": row.job_title or "Team member",
-        "avatar": row.avatar_url,
-        "isSelf": row.user_id == g.user_id,
-    } for row in rows]
+
+    members = []
+    for row in rows:
+        # The member's next trip that hasn't ended yet (active or upcoming).
+        trip = (
+            Trip.query
+            .filter_by(_user_id=row.user_id)
+            .filter(Trip._end_date >= today)
+            .order_by(Trip._start_date.asc())
+            .first()
+        )
+        trip_data = None
+        if trip and trip._destination:
+            trip_data = {
+                "destination": trip._destination,
+                "startDate": trip._start_date.isoformat() if trip._start_date else None,
+                "endDate": trip._end_date.isoformat() if trip._end_date else None,
+            }
+
+        # Derive a team label from the job title (e.g. "Sales Director" -> "Sales").
+        title = row.job_title or ""
+        team_label = _team_from_title(title)
+
+        members.append({
+            "id": row.user_id,
+            "name": row.full_name or row.email.split("@")[0],
+            "role": row.job_title or "Team member",
+            "team": team_label,
+            "avatar": row.avatar_url,
+            "isSelf": row.user_id == g.user_id,
+            "trip": trip_data,
+        })
+
     return jsonify({"members": members}), 200
+
+
+def _team_from_title(title):
+    """Map a job title to a broad team label for the Team view's grouping."""
+    lowered = (title or "").lower()
+    buckets = [
+        ("Sales", ("sales", "account", "revenue", "business development")),
+        ("Engineering", ("engineer", "developer", "devops", "sre", "technical")),
+        ("Product", ("product", "pm")),
+        ("Design", ("design", "ux", "ui")),
+        ("Finance", ("finance", "cfo", "accounting", "controller")),
+        ("Marketing", ("marketing", "growth", "brand")),
+        ("Leadership", ("ceo", "coo", "cto", "founder", "chief", "vp", "head", "director")),
+    ]
+    for label, needles in buckets:
+        if any(n in lowered for n in needles):
+            return label
+    return "Team"
 
 
 @flyby_api.route('/health', methods=['GET'])

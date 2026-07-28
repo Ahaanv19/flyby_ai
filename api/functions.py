@@ -29,6 +29,7 @@ from api.jwt_authorize import token_required
 from api.travel_search import search as run_travel_search
 from api.trip_reasoning import reason_about_trip
 from api.nl_search import parse_search as run_parse_search
+from api.chat_ai import detect_trip as run_detect_trip
 from model.base import new_uuid, utcnow
 from model.mfa import MfaCredential, PendingVerification
 from model.security import AuditLog, TwoFactorAuditLog, mask_phone
@@ -343,6 +344,26 @@ def parse_search():
         "parsed": parsed,
         "engine": "gemini" if parsed is not None else "fallback",
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# Conversation intelligence
+# ---------------------------------------------------------------------------
+
+@functions_api.route('/detect-trip', methods=['POST'])
+@token_required()
+def detect_trip():
+    """
+    Detect a business trip being planned in a chat conversation.
+
+    Returns ``{trip: {...}}`` when the conversation is clearly planning a trip,
+    or ``{trip: null}`` otherwise — so the chat assistant only speaks up when
+    there's genuinely something to act on.
+    """
+    data = request.get_json(silent=True) or {}
+    messages = data.get("messages")
+    trip = run_detect_trip(messages if isinstance(messages, list) else [])
+    return jsonify({"trip": trip}), 200
 
 
 # ---------------------------------------------------------------------------
