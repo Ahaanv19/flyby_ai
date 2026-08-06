@@ -51,6 +51,10 @@ _default_origins = [
     'http://127.0.0.1:4173',
     'http://localhost:8659',
     'http://127.0.0.1:8659',
+    # The GitHub Pages deploy of the frontend. Its requests come from this
+    # origin, so the local backend must allow it (a Pages-hosted site can talk
+    # to a localhost backend because browsers treat localhost as trustworthy).
+    'https://rbrandt2006-hash.github.io',
 ]
 _extra_origins = [
     o.strip() for o in os.environ.get('FRONTEND_ORIGINS', '').split(',') if o.strip()
@@ -148,6 +152,38 @@ app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID') or None
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN') or None
 app.config['TWILIO_FROM_NUMBER'] = os.environ.get('TWILIO_FROM_NUMBER') or None
+
+# ---------------------------------------------------------------------------
+# Duffel — real flight search + booking
+# ---------------------------------------------------------------------------
+# When the token is unset, flight search falls back to the local generator so
+# the app still works. A token beginning "duffel_live_" books REAL flights and
+# charges REAL money; "duffel_test_" uses Duffel's sandbox. Guardrails below
+# apply to live bookings regardless.
+app.config['DUFFEL_ACCESS_TOKEN'] = os.environ.get('DUFFEL_ACCESS_TOKEN') or None
+app.config['DUFFEL_API_URL'] = os.environ.get('DUFFEL_API_URL') or 'https://api.duffel.com'
+app.config['DUFFEL_VERSION'] = os.environ.get('DUFFEL_VERSION') or 'v2'
+# Payment model for bookings:
+#   "card"    Duffel Payments — the traveler pays with their own card (default).
+#             Requires Duffel Payments enabled on the account.
+#   "balance" the order is paid from Flyby's own Duffel balance instead.
+app.config['DUFFEL_PAYMENT_TYPE'] = (os.environ.get('DUFFEL_PAYMENT_TYPE') or 'card').lower()
+# Whether the configured token is live (books real tickets). Derived from the
+# token prefix so the booking path can require confirmation only where it counts.
+app.config['DUFFEL_LIVE'] = bool(
+    (app.config['DUFFEL_ACCESS_TOKEN'] or '').startswith('duffel_live_')
+)
+# Hard spend cap: the backend refuses to create any order above this amount
+# (USD), so a bug or bad input can never book a runaway-priced ticket.
+app.config['DUFFEL_MAX_BOOKING_USD'] = float(
+    os.environ.get('DUFFEL_MAX_BOOKING_USD') or 5000
+)
+# Extra safety switch: booking is DISABLED unless this is explicitly enabled.
+# Search/pricing (read-only, no charge) always work. Set DUFFEL_BOOKING_ENABLED=
+# true in .env only when you're ready to let the app create real orders.
+app.config['DUFFEL_BOOKING_ENABLED'] = (
+    os.environ.get('DUFFEL_BOOKING_ENABLED', '').lower() in ('1', 'true', 'yes')
+)
 
 # Security hardening: rate limiting, security/CSP headers, audit logging,
 # secure cookies (prod), and weak-secret checks. Safe-by-default — see
