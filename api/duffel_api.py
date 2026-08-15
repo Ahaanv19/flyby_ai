@@ -56,6 +56,7 @@ def search():
         return_date=data.get("returnDate") or data.get("return_date"),
         passengers=data.get("passengers") or 1,
         cabin_class=data.get("cabinClass") or "economy",
+        airline=(data.get("airline") or None),
     )
 
     if offers is None:

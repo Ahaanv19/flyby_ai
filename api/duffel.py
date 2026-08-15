@@ -156,12 +156,17 @@ def normalize_offer(offer):
 # ---------------------------------------------------------------------------
 
 def search_offers(origin, destination, departure_date, return_date=None,
-                  passengers=1, cabin_class="economy", limit=30):
+                  passengers=1, cabin_class="economy", limit=30, airline=None):
     """
     Search real flight offers. Read-only — never charges.
 
     Returns a list of normalized offers, or None on any failure so the caller
     can fall back to the local generator.
+
+    When ``airline`` is given (a carrier name or IATA code, e.g. "emirates" or
+    "EK"), the results are filtered to that carrier and returned cheapest-first —
+    this powers a follow-up like "show me Emirates", which re-queries live
+    inventory instead of just filtering whatever was already on screen.
     """
     if not is_configured():
         return None
@@ -205,11 +210,67 @@ def search_offers(origin, destination, departure_date, return_date=None,
         return None
 
     normalized = [normalize_offer(o) for o in offers]
-    # Cheapest first, with a "Recommended" tag on the top pick.
     normalized.sort(key=lambda o: o["price"])
-    if normalized:
-        normalized[0].setdefault("tags", [])
-    return normalized[:limit]
+
+    # Duffel treats an airport code as a metro and may return departures from
+    # nearby airports (e.g. ONT/BUR for a LAX search). Those nearby airports
+    # often have thin, single-carrier inventory whose cheap fares crowd out the
+    # real variety at the airport the user actually asked for. Prefer offers that
+    # depart the requested airport so results match the chip on screen — only
+    # fall back to the wider metro set if the exact airport has no offers.
+    req_o = (origin or "").upper()
+    req_d = (destination or "").upper()
+    exact = [
+        o for o in normalized
+        if (o.get("origin") or "").upper() == req_o
+        and (o.get("destination") or "").upper() == req_d
+    ]
+    if exact:
+        normalized = exact
+
+    # Airline-filtered search: keep only the requested carrier (matched on name
+    # or IATA code), cheapest first. Returns an empty list when that airline
+    # doesn't serve the route, so the caller can say so honestly.
+    if airline:
+        needle = str(airline).strip().lower()
+        filtered = [
+            o for o in normalized
+            if needle and (
+                needle in (o.get("airline") or "").lower()
+                or needle == (o.get("airlineCode") or "").lower()
+            )
+        ]
+        if filtered:
+            filtered[0].setdefault("tags", [])
+        return filtered[:limit]
+
+    # Return a DIVERSE set, not just the absolute cheapest `limit` offers.
+    # On long-haul routes there can be dozens of cheap multi-stop fares that
+    # would otherwise crowd out a nonstop from a premium carrier (e.g. a
+    # nonstop Emirates LAX→DXB sitting behind many cheap 2-stop itineraries).
+    # Keep the cheapest offer for each (airline, stops) combination first so the
+    # frontend always has good nonstop candidates to rank, then fill the rest
+    # by price. Everything stays read-only — this only affects which offers we
+    # surface, never what gets booked.
+    seen = set()
+    diverse = []
+    for o in normalized:
+        key = (o.get("airlineCode"), o.get("stops"))
+        if key not in seen:
+            seen.add(key)
+            diverse.append(o)
+    if len(diverse) < limit:
+        chosen = {id(o) for o in diverse}
+        for o in normalized:
+            if id(o) not in chosen:
+                diverse.append(o)
+                if len(diverse) >= limit:
+                    break
+
+    diverse.sort(key=lambda o: o["price"])
+    if diverse:
+        diverse[0].setdefault("tags", [])
+    return diverse[:limit]
 
 
 def create_component_client_key():
