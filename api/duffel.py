@@ -19,6 +19,7 @@ and its expiry — is carried through the normalized offer shape.
 """
 
 import logging
+import time
 
 import requests
 from flask import current_app
@@ -26,6 +27,38 @@ from flask import current_app
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 30
+
+# Duffel is reached over the public internet, so a request can occasionally be
+# dropped mid-handshake (flaky Wi-Fi, a captive portal, a transient TLS reset).
+# One dropped request shouldn't force the whole search onto the fake local
+# generator, so network-level failures are retried a few times before giving up.
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF = 0.6  # seconds, grows linearly per attempt
+
+
+def _request_with_retries(method, url, **kwargs):
+    """
+    Do an HTTP request, retrying only on connection/TLS/timeout errors (never on
+    an HTTP response — a 4xx/5xx is returned as-is for the caller to handle).
+
+    Returns the ``requests.Response`` on success, or ``None`` if every attempt
+    failed to reach Duffel.
+    """
+    last_error = None
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            return requests.request(method, url, timeout=TIMEOUT, **kwargs)
+        except (requests.ConnectionError, requests.Timeout) as error:
+            last_error = error
+            if attempt < _RETRY_ATTEMPTS:
+                time.sleep(_RETRY_BACKOFF * attempt)
+        except requests.RequestException as error:
+            # Anything else (e.g. malformed request) won't be fixed by retrying.
+            last_error = error
+            break
+    logger.warning("Duffel request to %s failed after %d attempt(s): %s",
+                   url, _RETRY_ATTEMPTS, last_error)
+    return None
 
 
 def is_configured():
@@ -190,13 +223,12 @@ def search_offers(origin, destination, departure_date, return_date=None,
         }
     }
 
-    try:
-        response = requests.post(
-            _url("/air/offer_requests?return_offers=true"),
-            json=payload, headers=_headers(), timeout=TIMEOUT,
-        )
-    except requests.RequestException as error:
-        logger.warning("Duffel search failed (%s); falling back to local flights", error)
+    response = _request_with_retries(
+        "POST",
+        _url("/air/offer_requests?return_offers=true"),
+        json=payload, headers=_headers(),
+    )
+    if response is None:
         return None
 
     if response.status_code >= 300:
