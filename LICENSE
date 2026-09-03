@@ -1,173 +1,91 @@
-MACRO COSMOS — PROPRIETARY SOFTWARE LICENSE
-Copyright (c) 2026 Ahaan Vaidyanathan and Rudransh Guha
-All Rights Reserved.
+FLYBY AI — PROPRIETARY SOFTWARE LICENSE
+Flyby AI Backend (API, Data Layer, and Operations Console)
 
-================================================================================
-MACRO COSMOS PROPRIETARY LICENSE v1.0
-================================================================================
+Copyright (c) 2026 Flyby AI. All Rights Reserved.
 
-This license governs the use of the software, source code, documentation,
-assets, and all associated files (collectively, the "Work") for the project
-known as "Macro Cosmos," including but not limited to the frontend and backend
-repositories. The Work is the exclusive intellectual property of:
+This software, including its source code, object code, database schemas, APIs,
+documentation, and all accompanying materials (collectively, the "Software"),
+is the confidential, proprietary, and trade-secret property of Flyby AI (the
+"Company").
 
-    Ahaan Vaidyanathan
-    Rudransh Guha
+THIS IS NOT OPEN SOURCE SOFTWARE. No license, right, title, or interest in
+the Software is granted to any person or entity, whether by implication,
+estoppel, or otherwise, except under a separate written agreement signed by
+an authorized representative of the Company.
 
-(collectively referred to as the "Owners")
+1. OWNERSHIP
+   The Software is owned exclusively by the Company and is protected by
+   United States and international copyright, trade secret, and other
+   intellectual property laws and treaties. All rights not expressly granted
+   in a signed written agreement are reserved by the Company.
 
-Each Owner holds an equal, undivided 50% interest in the Work. No action
-may be taken with respect to the Work that requires consent — including but
-not limited to licensing, sublicensing, transfer of ownership, or public
-representation — without the explicit written agreement of BOTH Owners.
+2. NO LICENSE GRANTED
+   You have no right to use, copy, reproduce, install, execute, access,
+   modify, adapt, translate, publish, transmit, distribute, sell, lease,
+   sublicense, host, or otherwise exploit the Software, in whole or in part.
 
-================================================================================
-SECTION 1 — NO OPEN-SOURCE LICENSE GRANTED
-================================================================================
+3. RESTRICTIONS
+   Without limiting Section 2, you may not:
+   (a) copy, reproduce, or create derivative works of the Software;
+   (b) distribute, publish, disclose, sell, rent, lease, sublicense, or
+       otherwise transfer the Software to any third party;
+   (c) reverse engineer, decompile, disassemble, or otherwise attempt to
+       derive the source code, structure, or algorithms of the Software;
+   (d) remove, alter, or obscure any copyright, trademark, or other
+       proprietary notice contained in or displayed by the Software;
+   (e) use the Software, or any data or output derived from it, to develop,
+       train, or improve any competing or derivative product, service, or
+       machine-learning model; or
+   (f) publicly display, perform, or publish benchmarks of the Software.
 
-This Work is NOT open-source software. No open-source license (including but
-not limited to MIT, Apache 2.0, GPL, BSD, or Creative Commons) is granted.
-The presence of this Work in a public repository does not constitute a grant
-of any rights to any third party.
+4. CONFIDENTIALITY
+   The Software constitutes confidential information and trade secrets of the
+   Company. You must not disclose the Software or any portion of it to any
+   third party, and must use at least reasonable care to prevent its
+   unauthorized access, disclosure, or use.
 
-Viewing this repository does not grant you any license, right, or permission
-to use, copy, modify, distribute, or reproduce the Work or any portion thereof.
+5. AUTHORIZED ACCESS
+   Access to the Software is permitted only to employees, contractors, and
+   partners of the Company who are bound by written confidentiality
+   obligations, and only to the extent necessary to perform work expressly
+   authorized by the Company.
 
-================================================================================
-SECTION 2 — PROHIBITED ACTIONS (WITHOUT PRIOR WRITTEN CONSENT)
-================================================================================
+6. THIRD-PARTY COMPONENTS
+   The Software may incorporate or depend upon third-party components that
+   are licensed separately by their respective owners. Those components
+   remain subject to their own license terms, and nothing in this License
+   modifies, supersedes, or restricts those terms. This License applies
+   solely to the Company's own code and materials.
 
-The following actions are STRICTLY PROHIBITED for any individual or entity
-other than the Owners, unless prior explicit written consent has been obtained
-from BOTH Ahaan Vaidyanathan AND Rudransh Guha:
+7. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
 
-2.1  COPYING & REPRODUCTION
-     You may not copy, reproduce, or duplicate the Work or any portion of it,
-     in whole or in part, in any medium or format.
+8. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL THE COMPANY BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER
+   DEALINGS IN THE SOFTWARE.
 
-2.2  MODIFICATION & DERIVATIVE WORKS
-     You may not modify, adapt, translate, reverse-engineer, decompile,
-     disassemble, or create derivative works based on the Work.
+9. TERMINATION
+   Any authorization to access the Software terminates automatically and
+   immediately upon any breach of this License. Upon termination, you must
+   immediately cease all use and permanently destroy all copies of the
+   Software in your possession or control.
 
-2.3  DISTRIBUTION & PUBLICATION
-     You may not distribute, publish, broadcast, transmit, or otherwise make
-     the Work or any portion of it available to any third party.
+10. ENFORCEMENT
+    Unauthorized use, copying, or disclosure of the Software may cause
+    irreparable harm for which monetary damages are an inadequate remedy. The
+    Company is entitled to seek injunctive relief in addition to all other
+    remedies available at law or in equity.
 
-2.4  FORKING
-     You may not fork this repository or any repository containing this Work
-     on any platform (including but not limited to GitHub, GitLab, Bitbucket)
-     for any purpose, whether public or private, except for purely private
-     personal study with no redistribution.
+11. GOVERNING LAW
+    This License is governed by the laws of the State of California, United
+    States of America, without regard to its conflict-of-law provisions.
 
-2.5  TEMPLATES & REUSE
-     You may not use this Work, its structure, code, design, or any portion
-     thereof as a template, boilerplate, starter project, or basis for any
-     other project, product, or publication.
+Unauthorized use, reproduction, or distribution of this Software, or any
+portion of it, may result in severe civil and criminal penalties, and will be
+prosecuted to the maximum extent possible under law.
 
-2.6  PROFESSIONAL REPRESENTATION
-     You may not display, reference, claim authorship of, or represent this
-     Work — in whole or in part — on:
-       (a) resumes or CVs
-       (b) LinkedIn profiles or any professional networking platform
-       (c) personal websites, blogs, or online portfolios
-       (d) job applications or interview materials
-       (e) any other professional or career-oriented medium
-
-2.7  ACADEMIC & INSTITUTIONAL USE
-     You may not submit, reference, present, or represent this Work — in
-     whole or in part — as part of:
-       (a) college or university applications
-       (b) scholarship or grant applications
-       (c) academic coursework, theses, or dissertations
-       (d) academic competitions, hackathons, or science fairs
-       (e) any other institutional admissions or evaluation process
-
-2.8  COMMERCIAL USE
-     You may not use the Work or any portion thereof for any commercial
-     purpose, including but not limited to sale, licensing, or incorporation
-     into a commercial product or service.
-
-================================================================================
-SECTION 3 — PERMISSION PROCESS
-================================================================================
-
-Any individual or entity seeking to engage in any activity described in
-Section 2 must:
-
-  (a) Submit a written request to BOTH Owners describing the intended use;
-  (b) Receive explicit written approval from BOTH Ahaan Vaidyanathan AND
-      Rudransh Guha before proceeding; and
-  (c) Comply with any conditions attached to such approval.
-
-Approval from only one Owner is insufficient and does not constitute
-authorization under this License.
-
-================================================================================
-SECTION 4 — OWNERSHIP & JOINT RIGHTS
-================================================================================
-
-4.1  The Owners jointly and equally own all intellectual property rights in
-     the Work, including copyright, trade secret rights, and any other
-     applicable intellectual property rights.
-
-4.2  Neither Owner may unilaterally grant a license to a third party, transfer
-     their ownership interest, or take any action that would diminish the other
-     Owner's rights in the Work without the other Owner's prior written consent.
-
-4.3  This equal ownership arrangement is perpetual and survives any
-     termination of collaboration between the Owners.
-
-================================================================================
-SECTION 5 — ENFORCEMENT & REMEDIES
-================================================================================
-
-5.1  Any unauthorized use of the Work constitutes a violation of applicable
-     copyright law and the terms of this License.
-
-5.2  The Owners reserve the right to pursue all available legal remedies,
-     including but not limited to injunctive relief, monetary damages, and
-     recovery of attorneys' fees and costs, for any violation of this License.
-
-5.3  Violations of Sections 2.6 and 2.7 (professional and academic misuse)
-     are considered material breaches and will be pursued accordingly.
-
-================================================================================
-SECTION 6 — DISCLAIMER OF WARRANTIES
-================================================================================
-
-THE WORK IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, TITLE, OR NON-INFRINGEMENT. IN NO EVENT
-SHALL THE OWNERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY
-ARISING FROM, OUT OF, OR IN CONNECTION WITH THE WORK OR THE USE OR OTHER
-DEALINGS IN THE WORK.
-
-================================================================================
-SECTION 7 — SEVERABILITY
-================================================================================
-
-If any provision of this License is found to be invalid or unenforceable
-under applicable law, the remaining provisions shall continue in full force
-and effect without modification.
-
-================================================================================
-SECTION 8 — GOVERNING LAW
-================================================================================
-
-This License shall be governed by and construed in accordance with the laws
-of the State of California, United States of America, without regard to its
-conflict of law provisions.
-
-================================================================================
-SECTION 9 — ENTIRE AGREEMENT
-================================================================================
-
-This License constitutes the entire agreement between the Owners and any
-third party with respect to the Work and supersedes all prior or
-contemporaneous understandings, agreements, representations, or warranties.
-
-================================================================================
-
-For permission requests, contact both Owners directly.
-
-Copyright (c) 2026 Ahaan Vaidyanathan and Rudransh Guha — All Rights Reserved.
+For licensing inquiries, contact Flyby AI.
