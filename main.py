@@ -64,6 +64,7 @@ from api.storage import storage_api
 from api.functions import functions_api
 from api.flyby import flyby_api
 from api.duffel_api import duffel_api
+from api.plaid_api import plaid_api
 
 # database Initialization functions
 from model.user import User, Profile, initUsers
@@ -87,6 +88,7 @@ app.register_blueprint(storage_api)     # /storage/v1/*
 app.register_blueprint(functions_api)   # /functions/v1/*
 app.register_blueprint(flyby_api)       # /api/*
 app.register_blueprint(duffel_api)      # /api/duffel/*  (real flight search + booking)
+app.register_blueprint(plaid_api)       # /api/plaid/*   (card linking + expense capture)
 
 
 # Tell Flask-Login the view function name of your login route

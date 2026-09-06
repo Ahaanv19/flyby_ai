@@ -149,6 +149,17 @@ app.config['GEMINI_SERVER'] = (
        'gemini-flash-latest:generateContent'
 )
 app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
+
+# ---------------------------------------------------------------------------
+# Plaid — automatic expense capture from a linked card
+# ---------------------------------------------------------------------------
+# Read-only (Transactions product). Flyby never sees a card number: the traveler
+# authenticates with their bank inside Plaid Link and we hold only an opaque
+# access token. Unset, card linking reports itself as unavailable and the app
+# behaves exactly as it does without it.
+app.config['PLAID_CLIENT_ID'] = os.environ.get('PLAID_CLIENT_ID') or None
+app.config['PLAID_SECRET'] = os.environ.get('PLAID_SECRET') or None
+app.config['PLAID_ENV'] = (os.environ.get('PLAID_ENV') or 'sandbox').lower()
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID') or None
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN') or None
 app.config['TWILIO_FROM_NUMBER'] = os.environ.get('TWILIO_FROM_NUMBER') or None

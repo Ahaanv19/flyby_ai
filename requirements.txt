@@ -26,3 +26,7 @@ requests
 
 # Production database driver (SQLite is used in development, no driver needed)
 pymysql
+
+# Production WSGI server — what the Docker image runs (the Flask dev server in
+# main.py is for localhost only).
+gunicorn

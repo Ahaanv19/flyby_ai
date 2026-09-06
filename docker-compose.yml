@@ -1,12 +1,18 @@
-
 services:
         web:
-                image: automous
+                image: flyby-backend
+                container_name: flyby-backend
                 build: .
                 env_file:
-                        - .env # This file is optional; defaults will be used if it does not exist
+                        # Create this on the server (copy .env.example -> .env)
+                        # It holds SECRET_KEY and the Duffel / Gemini keys.
+                        - .env
                 ports:
-                        - "8888:8888"
+                        - "8659:8659"
                 volumes:
+                        # Persists the SQLite database, uploads and storage across
+                        # rebuilds. Flask's instance path inside the image is
+                        # /instance (WORKDIR is /), so the DB lives at
+                        # /instance/volumes/flyby.db.
                         - ./instance:/instance
                 restart: unless-stopped

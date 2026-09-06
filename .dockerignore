@@ -1,0 +1,33 @@
+# Keep secrets, local state and bulk out of the image.
+#
+# .env is excluded on purpose: baking it into an image layer would ship the
+# live Duffel token and SECRET_KEY inside the image. docker-compose still
+# supplies it at RUNTIME via `env_file`, which reads it from the host.
+
+.env
+.env.*
+!.env.example
+
+# Local Python environment / caches — the image installs its own.
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Local database, uploads and storage — provided by the ./instance volume.
+instance/
+backup/
+*.db
+*.sqlite3
+
+# Repo/editor noise
+.git
+.gitignore
+.github/
+.vscode/
+.idea/
+.DS_Store
+*.log
