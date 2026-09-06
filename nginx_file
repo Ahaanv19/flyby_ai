@@ -14,7 +14,7 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name autonomous.opencodingsociety.com;
+    server_name hungerheros.opencodingsociety.com;
 
     # Receipt and avatar uploads go up to 10 MB (MAX_CONTENT_LENGTH in the app).
     # nginx defaults to 1 MB and would reject them with 413 without this.
