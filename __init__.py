@@ -160,6 +160,19 @@ app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
 app.config['PLAID_CLIENT_ID'] = os.environ.get('PLAID_CLIENT_ID') or None
 app.config['PLAID_SECRET'] = os.environ.get('PLAID_SECRET') or None
 app.config['PLAID_ENV'] = (os.environ.get('PLAID_ENV') or 'sandbox').lower()
+
+# ---------------------------------------------------------------------------
+# Google Calendar — meeting-to-trip detection and trip calendar sync
+# ---------------------------------------------------------------------------
+# The traveler authenticates with Google directly; Flyby only holds tokens.
+# Unset, calendar sync reports itself as unavailable and the UI shows
+# "Coming soon" rather than pretending to connect.
+app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID') or None
+app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET') or None
+app.config['GOOGLE_REDIRECT_URI'] = (
+    os.environ.get('GOOGLE_REDIRECT_URI')
+    or 'http://localhost:8659/auth/google/callback'
+)
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID') or None
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN') or None
 app.config['TWILIO_FROM_NUMBER'] = os.environ.get('TWILIO_FROM_NUMBER') or None
