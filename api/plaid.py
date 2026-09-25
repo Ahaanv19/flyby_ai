@@ -110,13 +110,21 @@ def create_link_token(user_id, client_name="Flyby AI"):
     The traveler picks their bank and authenticates inside Plaid — their
     credentials and card number never reach Flyby.
     """
-    return _post("/link/token/create", {
+    payload = {
         "user": {"client_user_id": str(user_id)},
         "client_name": client_name,
         "products": ["transactions"],
         "country_codes": ["US"],
         "language": "en",
-    })
+    }
+    # Most major banks (Chase, Wells Fargo, Capital One) authenticate via OAuth
+    # and hand control back to a registered HTTPS redirect. Without this they
+    # simply won't appear as linkable. Sandbox's test banks don't use OAuth,
+    # which is why it works without it — so only send it when one is configured.
+    redirect_uri = current_app.config.get("PLAID_REDIRECT_URI")
+    if redirect_uri:
+        payload["redirect_uri"] = redirect_uri
+    return _post("/link/token/create", payload)
 
 
 def exchange_public_token(public_token):

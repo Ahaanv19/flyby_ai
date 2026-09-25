@@ -138,6 +138,30 @@ app.config['STORAGE_FOLDER'] = os.path.join(app.instance_path, 'storage')
 os.makedirs(app.config['STORAGE_FOLDER'], exist_ok=True)
 
 # ---------------------------------------------------------------------------
+# Public URLs — how this instance is reached from a browser
+# ---------------------------------------------------------------------------
+# Derived rather than hard-coded so ONE .env works locally and in production.
+# The Dockerfile sets FLASK_ENV=production inside the container, so the deployed
+# instance resolves to the real hostnames while a local run resolves to
+# localhost — no per-environment file to keep in sync, and no OAuth redirect
+# pointing at the wrong host. Override either with an env var if the domains
+# ever change.
+_IS_PRODUCTION = (
+    os.environ.get('FLASK_ENV') == 'production'
+    or os.environ.get('ENV', '').lower() in ('prod', 'production')
+)
+PUBLIC_BACKEND_URL = (
+    os.environ.get('PUBLIC_BACKEND_URL')
+    or ('https://hungerheros.opencodingsociety.com' if _IS_PRODUCTION
+        else 'http://localhost:8659')
+).rstrip('/')
+PUBLIC_APP_URL = (
+    os.environ.get('APP_URL')
+    or ('https://rbrandt2006-hash.github.io/flyby' if _IS_PRODUCTION
+        else 'http://localhost:8080')
+).rstrip('/')
+
+# ---------------------------------------------------------------------------
 # Optional third-party integrations
 # ---------------------------------------------------------------------------
 # Travel search, transcription and SMS all fall back to deterministic local
@@ -160,6 +184,9 @@ app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
 app.config['PLAID_CLIENT_ID'] = os.environ.get('PLAID_CLIENT_ID') or None
 app.config['PLAID_SECRET'] = os.environ.get('PLAID_SECRET') or None
 app.config['PLAID_ENV'] = (os.environ.get('PLAID_ENV') or 'sandbox').lower()
+# Required only for OAuth banks in production; Plaid demands HTTPS here, so it
+# stays unset locally (sandbox's test banks don't use OAuth).
+app.config['PLAID_REDIRECT_URI'] = os.environ.get('PLAID_REDIRECT_URI') or None
 
 # ---------------------------------------------------------------------------
 # Google Calendar — meeting-to-trip detection and trip calendar sync
@@ -171,8 +198,28 @@ app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID') or None
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET') or None
 app.config['GOOGLE_REDIRECT_URI'] = (
     os.environ.get('GOOGLE_REDIRECT_URI')
-    or 'http://localhost:8659/auth/google/callback'
+    or f'{PUBLIC_BACKEND_URL}/auth/google/callback'
 )
+
+# ---------------------------------------------------------------------------
+# Outlook / Microsoft 365 — calendar sync via Microsoft Graph
+# ---------------------------------------------------------------------------
+# Registered multi-tenant, so employees at any customer company can connect.
+# MS_AUTHORITY controls who may sign in: "organizations" means any work or
+# school account; set a tenant id to restrict it to one company.
+app.config['MS_CLIENT_ID'] = os.environ.get('MS_CLIENT_ID') or None
+app.config['MS_CLIENT_SECRET'] = os.environ.get('MS_CLIENT_SECRET') or None
+app.config['MS_TENANT_ID'] = os.environ.get('MS_TENANT_ID') or None
+app.config['MS_AUTHORITY'] = os.environ.get('MS_AUTHORITY') or 'organizations'
+app.config['MS_REDIRECT_URI'] = (
+    os.environ.get('MS_REDIRECT_URI')
+    or f'{PUBLIC_BACKEND_URL}/auth/outlook/callback'
+)
+
+# Where to send the traveler back to after an OAuth round-trip. The provider
+# redirects to this backend (the redirect URI is registered there, not on the
+# static frontend), and the backend hands the one-time code back to the app.
+app.config['APP_URL'] = PUBLIC_APP_URL
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID') or None
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN') or None
 app.config['TWILIO_FROM_NUMBER'] = os.environ.get('TWILIO_FROM_NUMBER') or None

@@ -66,6 +66,7 @@ from api.flyby import flyby_api
 from api.duffel_api import duffel_api
 from api.plaid_api import plaid_api
 from api.google_api import google_api
+from api.outlook_api import outlook_api
 
 # database Initialization functions
 from model.user import User, Profile, initUsers
@@ -91,6 +92,7 @@ app.register_blueprint(flyby_api)       # /api/*
 app.register_blueprint(duffel_api)      # /api/duffel/*  (real flight search + booking)
 app.register_blueprint(plaid_api)       # /api/plaid/*   (card linking + expense capture)
 app.register_blueprint(google_api)      # /api/google/*  (Google Calendar sync)
+app.register_blueprint(outlook_api)     # /api/outlook/* (Outlook / Microsoft 365 sync)
 
 
 # Tell Flask-Login the view function name of your login route
@@ -332,6 +334,37 @@ def set_user_role(user_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Calendar OAuth callbacks
+# ---------------------------------------------------------------------------
+# Google and Microsoft redirect here after the traveler consents, because the
+# redirect URI has to be a fixed, registered address — it can't point at a
+# static frontend route. The one-time code is handed straight back to the app,
+# which exchanges it for tokens using its own authenticated session. Nothing
+# sensitive is exposed: the code is single-use, short-lived, and useless without
+# the client secret, which never leaves this server.
+
+def _oauth_redirect(provider):
+    from urllib.parse import urlencode
+    app_url = (current_app.config.get('APP_URL') or '').rstrip('/')
+    error = request.args.get('error')
+    code = request.args.get('code')
+    params = {f'{provider}_error': error} if error else {f'{provider}_code': code or ''}
+    return redirect(f"{app_url}/settings?{urlencode(params)}")
+
+
+@app.route('/auth/outlook/callback')
+def outlook_callback():
+    """Return from Microsoft's consent screen."""
+    return _oauth_redirect('outlook')
+
+
+@app.route('/auth/google/callback')
+def google_callback():
+    """Return from Google's consent screen."""
+    return _oauth_redirect('google')
 
 
 @app.route('/health')
