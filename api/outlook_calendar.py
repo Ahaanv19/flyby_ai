@@ -262,11 +262,41 @@ def _plus_days(iso_start, days):
     return (base + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _location_text(location):
+    """
+    The full place an Outlook event is at, as one string.
+
+    Picking a suggestion in Outlook's Location box stores the venue and its
+    address separately: displayName is just "San Diego International Airport",
+    and the city lives in address.city. Outlook stitches them together on screen,
+    but Graph doesn't — so reading displayName alone threw the city away, and a
+    meeting at an airport, hotel or office never registered as travel.
+
+    Google has no equivalent field; it keeps whatever the organizer typed.
+    """
+    display = (location.get("displayName") or "").strip()
+    address = location.get("address") or {}
+    parts = [
+        address.get("street"),
+        address.get("city"),
+        address.get("state"),
+        address.get("countryOrRegion"),
+    ]
+    tail = [p.strip() for p in parts if p and p.strip()]
+    # Don't repeat what displayName already says (a typed "Chicago, IL" can come
+    # back with the same city in address.city). Compare whole segments: a
+    # substring test would drop "San Diego" for appearing inside "San Diego
+    # International Airport" — the one part we actually need.
+    shown = {seg.strip().lower() for seg in display.split(",")}
+    tail = [p for p in tail if p.lower() not in shown]
+    return ", ".join([display, *tail]) if display else ", ".join(tail)
+
+
 def normalize_event(event):
     """Graph event -> the same shape the Google integration returns."""
     start = (event.get("start") or {}).get("dateTime") or ""
     end = (event.get("end") or {}).get("dateTime") or ""
-    location = (event.get("location") or {}).get("displayName") or ""
+    location = _location_text(event.get("location") or {})
     return {
         "id": event.get("id"),
         "title": event.get("subject") or "(no title)",
