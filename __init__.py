@@ -184,9 +184,14 @@ app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
 app.config['PLAID_CLIENT_ID'] = os.environ.get('PLAID_CLIENT_ID') or None
 app.config['PLAID_SECRET'] = os.environ.get('PLAID_SECRET') or None
 app.config['PLAID_ENV'] = (os.environ.get('PLAID_ENV') or 'sandbox').lower()
-# Required only for OAuth banks in production; Plaid demands HTTPS here, so it
-# stays unset locally (sandbox's test banks don't use OAuth).
-app.config['PLAID_REDIRECT_URI'] = os.environ.get('PLAID_REDIRECT_URI') or None
+# Required only for OAuth banks (Chase, Wells Fargo, Capital One). Plaid demands
+# HTTPS here, so it is derived rather than set in .env: production gets the real
+# https callback, local stays None — which is correct, because sandbox's test
+# banks don't use OAuth. One .env, right behaviour in both places.
+app.config['PLAID_REDIRECT_URI'] = (
+    os.environ.get('PLAID_REDIRECT_URI')
+    or (f'{PUBLIC_BACKEND_URL}/auth/plaid/callback' if _IS_PRODUCTION else None)
+)
 
 # ---------------------------------------------------------------------------
 # Google Calendar — meeting-to-trip detection and trip calendar sync

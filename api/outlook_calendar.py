@@ -19,6 +19,7 @@ without it and the UI can honestly show "Coming soon".
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import requests
@@ -166,31 +167,99 @@ def get_account_email(access_token):
 # Events
 # ---------------------------------------------------------------------------
 
-def list_events(access_token, time_min=None, max_results=50):
-    """Upcoming events, normalized into the shape the calendar UI renders."""
+def list_events(access_token, time_min=None, max_results=50, window_days=180):
+    """
+    Upcoming events, normalized into the shape the calendar UI renders.
+
+    Uses Graph's calendarView rather than /me/events. Two reasons, both of which
+    matter for trip detection:
+
+      * calendarView expands a recurring series into its individual occurrences,
+        so a weekly on-site in Chicago produces a meeting Flyby can act on.
+        /me/events returns only the series master.
+      * It takes an explicit date window as parameters. Asking /me/events for
+        future meetings means a $filter on start/dateTime alongside an $orderby
+        on the same property, which Exchange rejects on many mailboxes ("the
+        restriction or sort order is too complex"), and the whole list comes
+        back empty.
+
+    Returns (events, error). On a query Graph dislikes we retry once against
+    plain /me/events with no filter and no sort — fewer guarantees about
+    ordering, but the traveler sees their calendar rather than nothing.
+    """
+    start = (time_min or _now_iso())[:19].rstrip("Z")
+    end = _plus_days(start, window_days)
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        # Ask Graph to express every start/end in UTC so the date we slice off
+        # the front is the date the meeting is actually on.
+        "Prefer": 'outlook.timezone="UTC"',
+    }
     params = {
+        "startDateTime": start,
+        "endDateTime": end,
         "$orderby": "start/dateTime",
         "$top": max_results,
         "$select": "id,subject,start,end,location,bodyPreview,attendees,isCancelled",
     }
-    if time_min:
-        # Only future meetings — past ones can't produce a trip to book.
-        params["$filter"] = f"start/dateTime ge '{time_min}'"
-    response = _request("GET", f"{GRAPH}/me/events",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        params=params)
+    response = _request("GET", f"{GRAPH}/me/calendarView", headers=headers, params=params)
+
+    if response is not None and response.status_code == 400:
+        # Some mailboxes reject the sort; the events themselves are still there.
+        logger.warning("Microsoft calendarView rejected the query (%s), retrying unsorted: %s",
+                       response.status_code, response.text[:300])
+        params.pop("$orderby", None)
+        response = _request("GET", f"{GRAPH}/me/calendarView", headers=headers, params=params)
+
+    if response is not None and 400 <= response.status_code < 500 and response.status_code != 401:
+        logger.warning("Microsoft calendarView %s, falling back to /me/events: %s",
+                       response.status_code, response.text[:300])
+        response = _request("GET", f"{GRAPH}/me/events", headers=headers, params={
+            "$top": max_results,
+            "$select": params["$select"],
+        })
+
     if response is None:
         return None, "network_error"
     if response.status_code == 401:
         return None, "token_expired"
     if response.status_code >= 300:
-        logger.warning("Microsoft events %s: %s", response.status_code, response.text[:200])
-        return None, "request_failed"
+        logger.warning("Microsoft events %s: %s", response.status_code, response.text[:300])
+        return None, _graph_error(response)
     try:
         items = response.json().get("value", [])
     except ValueError:
         return None, "bad_response"
-    return [normalize_event(e) for e in items], None
+
+    events = [normalize_event(e) for e in items]
+    # The fallback path is unsorted and unbounded; keep the same contract the
+    # caller gets from calendarView so the UI never has to care which ran.
+    today = start[:10]
+    events = [e for e in events if (e.get("endDate") or e.get("startDate") or "") >= today]
+    events.sort(key=lambda e: (e.get("startDate") or "", e.get("title") or ""))
+    return events, None
+
+
+def _graph_error(response):
+    """A short, machine-readable reason from a Graph error body."""
+    try:
+        return (response.json().get("error") or {}).get("code") or "request_failed"
+    except ValueError:
+        return "request_failed"
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _plus_days(iso_start, days):
+    """The far end of the calendar window, as Graph wants it."""
+    try:
+        base = datetime.strptime(iso_start[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        base = datetime.now(timezone.utc).replace(tzinfo=None)
+    return (base + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def normalize_event(event):
