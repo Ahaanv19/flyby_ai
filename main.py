@@ -65,6 +65,11 @@ from api.functions import functions_api
 from api.flyby import flyby_api
 from api.duffel_api import duffel_api
 from api.plaid_api import plaid_api
+from api.stays_api import stays_api
+from api.oauth_login import (available_providers, complete_login, is_login_state,
+                             oauth_login_api)
+from model.identity import UserIdentity
+from model.plaid import PlaidItem, PlaidTransaction
 from api.google_api import google_api
 from api.outlook_api import outlook_api
 
@@ -75,7 +80,7 @@ from model.trip import (CalendarSuggestion, Document, Itinerary, TravelAlert,
                         Trip, initTrips)
 from model.expense import Expense, initExpenses
 from model.preferences import (ClientCompany, LoyaltyProgram, TravelPreference,
-                               initPreferences)
+                               ensurePreferenceColumns, initPreferences)
 from model.roles import UserRole, Permission, RolePermission, initRoles
 from model.security import (ActiveSession, AuditLog, FileUploadPolicy,
                             SecurityAlert, TwoFactorAuditLog, initSecurity)
@@ -91,6 +96,8 @@ app.register_blueprint(functions_api)   # /functions/v1/*
 app.register_blueprint(flyby_api)       # /api/*
 app.register_blueprint(duffel_api)      # /api/duffel/*  (real flight search + booking)
 app.register_blueprint(plaid_api)       # /api/plaid/*   (card linking + expense capture)
+app.register_blueprint(stays_api)       # /api/stays/*   (real hotel search + booking)
+app.register_blueprint(oauth_login_api) # /auth/v1/authorize, identities (Google/Microsoft sign-in)
 app.register_blueprint(google_api)      # /api/google/*  (Google Calendar sync)
 app.register_blueprint(outlook_api)     # /api/outlook/* (Outlook / Microsoft 365 sync)
 
@@ -112,7 +119,13 @@ def load_user(user_id):
 
 @app.context_processor
 def inject_user():
-    return dict(current_user=current_user)
+    # app_url: where "Open the app" links go — the deployed app in production,
+    # not a hardcoded localhost address.
+    return dict(
+        current_user=current_user,
+        app_url=(current_app.config.get('APP_URL') or 'http://localhost:8080').rstrip('/'),
+        signin_providers=available_providers(),
+    )
 
 
 # Helper function to check if the URL is safe for redirects
@@ -131,7 +144,8 @@ def login():
     The same accounts work here and in the React app — one users table, one
     password — so an admin signs in with their normal Flyby email.
     """
-    error = None
+    # A failed Google/Microsoft sign-in comes back here with its reason.
+    error = request.args.get('oauth_error') or None
     next_page = request.args.get('next', '') or request.form.get('next', '')
     if request.method == 'POST':
         username = request.form.get('username', '')
@@ -148,6 +162,96 @@ def login():
             audit("login_failure", username=username)
             error = 'Invalid email or password.'
     return render_template("login.html", error=error, next=next_page)
+
+
+@app.route('/account', methods=['GET', 'POST'])
+@login_required
+def account():
+    """
+    Your account, for every signed-in user — not just administrators.
+
+    Shows who you are, how you can sign in (password, Google, Microsoft) with
+    buttons to connect another, recent sign-ins, and your trips with the
+    airline and hotel confirmations they carry. Lets you set or change your
+    password, and disconnect a sign-in method as long as another remains.
+    """
+    import secrets as _secrets
+    from flask import session as flask_session
+    from model.security import ActiveSession
+
+    if 'csrf' not in flask_session:
+        flask_session['csrf'] = _secrets.token_urlsafe(24)
+    notice, error = None, None
+    if request.args.get('linked'):
+        notice = f"{request.args.get('linked').title()} sign-in connected."
+
+    if request.method == 'POST':
+        if not _secrets.compare_digest(request.form.get('csrf', ''), flask_session.get('csrf', '')):
+            abort(400)
+        action = request.form.get('action')
+        has_password = not UserIdentity.password_was_never_set(current_user.uuid)
+
+        if action == 'password':
+            new_password = request.form.get('new_password', '')
+            if len(new_password) < 8:
+                error = "Your new password must be at least 8 characters."
+            elif new_password != request.form.get('confirm_password', ''):
+                error = "The two passwords don't match."
+            elif has_password and not current_user.is_password(request.form.get('current_password', '')):
+                error = "Your current password is incorrect."
+            else:
+                current_user.set_password(new_password)
+                db.session.commit()
+                UserIdentity.mark_password_set(current_user.uuid)
+                AuditLog.record(current_user.uuid, "password_changed", True, source="console")
+                notice = "Password updated." if has_password else "Password set — you can now also sign in with your email."
+
+        elif action == 'unlink':
+            identity = UserIdentity.query.filter_by(id=request.form.get('identity_id', ''),
+                                                    _user_id=current_user.uuid).first()
+            others = [i for i in UserIdentity.for_user(current_user.uuid) if identity and i.id != identity.id]
+            if identity is None:
+                error = "That sign-in method wasn't found."
+            elif not has_password and not others:
+                # Removing it would leave no way to sign in at all.
+                error = "Set a password first — otherwise you'd have no way to sign in."
+            else:
+                name = identity.read()['providerName']
+                db.session.delete(identity)
+                db.session.commit()
+                AuditLog.record(current_user.uuid, "oauth_unlinked", True, provider=identity._provider)
+                notice = f"{name} sign-in disconnected."
+
+    identities = [i.read() for i in UserIdentity.for_user(current_user.uuid)]
+    linked = {i['provider'] for i in identities}
+    sessions = (ActiveSession.query.filter_by(_user_id=current_user.uuid)
+                .order_by(ActiveSession._created_at.desc()).limit(8).all())
+
+    trips = []
+    for trip in Trip.query.filter_by(_user_id=current_user.uuid).all():
+        data = dict(getattr(trip, '_client_data', None) or {})
+        flight, hotel = data.get('flight') or {}, data.get('hotel') or {}
+        trips.append({
+            'destination': data.get('destination') or '—',
+            'start': (data.get('startDate') or '')[:10],
+            'end': (data.get('endDate') or '')[:10],
+            'status': data.get('status') or 'draft',
+            'airline': flight.get('airline'),
+            'flight_ref': flight.get('bookingReference'),
+            'round_trip': flight.get('tripType') == 'round_trip',
+            'hotel': hotel.get('name'),
+            'hotel_reserved': bool(hotel.get('reserved')),
+            'hotel_ref': hotel.get('bookingReference'),
+        })
+    trips.sort(key=lambda t: t['start'] or '', reverse=True)
+
+    return render_template(
+        "account.html",
+        csrf=flask_session['csrf'], notice=notice, error=error,
+        identities=identities, linked=linked,
+        has_password=not UserIdentity.password_was_never_set(current_user.uuid),
+        sessions=sessions, trips=trips,
+    )
 
 
 @app.route('/logout')
@@ -167,7 +271,8 @@ def page_not_found(e):
 @app.route('/')  # connects default URL to index() function
 def index():
     """The console landing page: live service status and system totals."""
-    return render_template("index.html", stats=_system_stats())
+    from api.duffel_stays import LAST_STATUS
+    return render_template("index.html", stats=_system_stats(), stays_status=dict(LAST_STATUS))
 
 
 def _system_stats():
@@ -264,7 +369,8 @@ def delete_user(user_id):
     # Remove owned rows first so nothing is orphaned behind the account.
     for model in (Trip, Expense, Chat, Notification, Itinerary, TravelAlert,
                   CalendarSuggestion, Document, LoyaltyProgram, ClientCompany,
-                  TravelPreference, ActiveSession, MfaCredential, UserRole):
+                  TravelPreference, ActiveSession, MfaCredential, UserRole,
+                  UserIdentity, PlaidItem, PlaidTransaction):
         try:
             model.query.filter_by(_user_id=user_uuid).delete()
         except Exception:  # noqa: BLE001
@@ -355,15 +461,23 @@ def _oauth_redirect(provider):
     return redirect(f"{app_url}/settings?{urlencode(params)}")
 
 
+# The same two addresses also finish "Sign in with Google / Microsoft". Reusing
+# them means no new redirect URLs to register; the state value says which flow
+# it is (sign-in states start with "login.").
+
 @app.route('/auth/outlook/callback')
 def outlook_callback():
-    """Return from Microsoft's consent screen."""
+    """Return from Microsoft's consent screen — calendar connect or sign-in."""
+    if is_login_state(request.args.get('state')):
+        return complete_login()
     return _oauth_redirect('outlook')
 
 
 @app.route('/auth/google/callback')
 def google_callback():
-    """Return from Google's consent screen."""
+    """Return from Google's consent screen — calendar connect or sign-in."""
+    if is_login_state(request.args.get('state')):
+        return complete_login()
     return _oauth_redirect('google')
 
 
@@ -493,6 +607,10 @@ with app.app_context():
         db.create_all()
     except Exception as e:
         print(f"Database table init: {e}")
+    try:
+        ensurePreferenceColumns()
+    except Exception as e:
+        print(f"Preference column init: {e}")
     try:
         initUsers()
         initCompanies()

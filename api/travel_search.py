@@ -1,13 +1,13 @@
 """
 Flyby AI — travel inventory search.
 
-Generates the flight, hotel and ground-transport options the search UI renders.
+Generates the flight and hotel options the search UI renders.
 Results are **deterministic for a given query**: the random generator is seeded
 from the search parameters, so typing the same search twice returns the same
 options, and a price the user saw is still there when they go to book it.
 
-Field names match the ``SearchFlightResult`` / ``SearchHotelResult`` /
-``SearchGroundResult`` types the frontend declares, so results render without
+Field names match the ``SearchFlightResult`` / ``SearchHotelResult`` types
+the frontend declares, so results render without
 any translation step.
 """
 
@@ -44,15 +44,6 @@ CANCELLATION = [
     "Free cancellation until 24h before check-in",
     "Free cancellation until 48h before check-in",
     "Non-refundable — best available rate",
-]
-
-GROUND_PROVIDERS = [
-    ("Rideshare", "Uber", 25, ["Convenient", "Popular"]),
-    ("Rideshare", "Lyft", 23, ["Best value", "Reliable"]),
-    ("Rental Car", "Hertz", 55, ["Flexibility", "Popular"]),
-    ("Rental Car", "Enterprise", 50, ["Great service"]),
-    ("Public Transit", "Metro", 5, ["Budget", "Eco-friendly"]),
-    ("Taxi", "Yellow Cab", 35, ["Traditional", "Metered"]),
 ]
 
 DEPARTURE_TIMES = [
@@ -219,47 +210,19 @@ def generate_hotels(query, city, check_in=None, check_out=None, limit=100):
     return hotels[:limit]
 
 
-def generate_ground(query, city):
-    """Generate ground-transport options from the airport into town."""
-    rng = _seeded_random("ground", query, city)
-    lowered = (query or "").lower()
-
-    providers = GROUND_PROVIDERS
-    if lowered:
-        matches = [g for g in GROUND_PROVIDERS if lowered in g[1].lower() or lowered in g[0].lower()]
-        providers = matches or GROUND_PROVIDERS
-
-    options = []
-    for i, (kind, provider, base_price, tags) in enumerate(providers):
-        options.append({
-            "id": f"ground-{i}",
-            "type": kind,
-            "provider": provider,
-            "price": max(1, base_price + rng.randint(-5, 10)),
-            "description": (
-                "Per day rate, compact car" if kind == "Rental Car"
-                else f"Estimated fare from airport to {city or 'city center'}"
-            ),
-            "tags": (["Recommended"] + list(tags)) if i == 0 else list(tags),
-        })
-    return options
-
-
 def search(search_type="all", query="", city="", origin="", dest="",
            check_in="", check_out="", date=""):
     """
-    Run a travel search and return ``{flights, hotels, ground}``.
+    Run a travel search and return ``{flights, hotels}``.
 
     Categories the caller didn't ask for come back as empty lists rather than
     being omitted, so the frontend can read every key unconditionally.
     """
-    results = {"flights": [], "hotels": [], "ground": []}
+    results = {"flights": [], "hotels": []}
 
     if search_type in ("flights", "all"):
         results["flights"] = generate_flights(query, origin, dest, date)
     if search_type in ("hotels", "all"):
         results["hotels"] = generate_hotels(query, city, check_in, check_out)
-    if search_type in ("ground", "all"):
-        results["ground"] = generate_ground(query, city)
 
     return results

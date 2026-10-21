@@ -66,6 +66,9 @@
 
         <div class="fly-nav-links">
             <a href="{{ url_for('index') }}">Overview</a>
+            {% if current_user.is_authenticated %}
+                <a href="{{ url_for('account') }}">Account</a>
+            {% endif %}
             {% if current_user.is_authenticated and current_user.is_admin() %}
                 <a href="{{ url_for('utable') }}">Accounts</a>
             {% endif %}

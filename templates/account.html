@@ -1,0 +1,200 @@
+{% extends "layouts/base.html" %}
+{% set project = "Your account" %}
+
+{#
+  Your account — available to every signed-in user, not only administrators.
+
+  How you sign in (password, Google, Microsoft), recent sign-ins, and your trips
+  with the airline and hotel confirmations they carry.
+#}
+
+{% block style %}
+<style>
+  .acct-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 1.1rem; }
+  .acct-card { padding: 1.4rem 1.5rem; }
+  .acct-card h2 { font-size: 1.02rem; font-weight: 800; margin: 0 0 .25rem; }
+  .acct-card .lede { color: var(--fly-muted); font-size: .86rem; margin: 0 0 1rem; }
+  .acct-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.6rem; }
+  .acct-avatar { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center;
+                 font-weight: 800; font-size: 1.3rem; background: var(--fly-surface-2); border: 1px solid var(--fly-border-strong); }
+  .acct-head h1 { margin: 0; font-size: 1.45rem; font-weight: 800; letter-spacing: -.02em; }
+  .acct-head p { margin: .15rem 0 0; color: var(--fly-muted); font-size: .9rem; }
+
+  .acct-row { display: flex; align-items: center; justify-content: space-between; gap: .8rem;
+              padding: .7rem 0; border-top: 1px solid var(--fly-border); font-size: .9rem; }
+  .acct-row:first-of-type { border-top: 0; }
+  .acct-row .k { color: var(--fly-muted); }
+  .acct-row .v { text-align: right; }
+  .acct-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86rem; }
+
+  .acct-alert { padding: .75rem .95rem; border-radius: 11px; font-size: .87rem; font-weight: 600; margin-bottom: 1.1rem; }
+  .acct-alert.ok { color: #bbf7d0; background: rgba(34, 197, 94, .1); border: 1px solid rgba(34, 197, 94, .3); }
+  .acct-alert.err { color: #fecaca; background: rgba(248, 113, 113, .12); border: 1px solid rgba(248, 113, 113, .34); }
+
+  .acct-field { margin-bottom: .8rem; }
+  .acct-field label { display: block; color: var(--fly-muted); font-size: .74rem; font-weight: 700;
+                      text-transform: uppercase; letter-spacing: .05em; margin-bottom: .35rem; }
+  .acct-input { width: 100%; padding: .66rem .8rem; border-radius: 10px; font: inherit; font-size: .93rem;
+                color: var(--fly-text); background: rgba(255,255,255,.05); border: 1px solid var(--fly-border); outline: none; }
+  .acct-input:focus { border-color: var(--fly-cta); box-shadow: 0 0 0 3px rgba(123,161,212,.18); }
+  .acct-link { background: none; border: 0; padding: 0; color: var(--fly-danger); font: inherit; font-size: .84rem;
+               font-weight: 700; cursor: pointer; }
+  .acct-link:focus-visible { outline: 2px solid var(--fly-cta); outline-offset: 2px; border-radius: 4px; }
+  .acct-provider-btns { display: flex; gap: .55rem; flex-wrap: wrap; margin-top: .9rem; }
+
+  .acct-table-wrap { overflow-x: auto; }
+  table.acct-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  .acct-table th { text-align: left; color: var(--fly-muted); font-size: .72rem; font-weight: 700; text-transform: uppercase;
+                   letter-spacing: .05em; padding: .5rem .6rem; border-bottom: 1px solid var(--fly-border-strong); white-space: nowrap; }
+  .acct-table td { padding: .65rem .6rem; border-bottom: 1px solid var(--fly-border); vertical-align: top; }
+  .ok-text { color: var(--fly-success); font-weight: 700; }
+  .warn-text { color: var(--fly-accent); font-weight: 700; }
+  .muted { color: var(--fly-muted); }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="fly-wrap">
+
+  <div class="acct-head">
+    <div class="acct-avatar">{{ current_user.name[:1] | upper }}</div>
+    <div>
+      <h1>{{ current_user.name }}</h1>
+      <p>{{ current_user.email }} · {{ current_user.role }}</p>
+    </div>
+  </div>
+
+  {% if notice %}<div class="acct-alert ok" role="status">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="acct-alert err" role="alert">{{ error }}</div>{% endif %}
+
+  <div class="acct-grid">
+
+    <!-- How you sign in -->
+    <section class="fly-panel acct-card" aria-labelledby="signin-h">
+      <h2 id="signin-h">How you sign in</h2>
+      <p class="lede">Any of these opens the same account, in the app and here.</p>
+
+      <div class="acct-row">
+        <span class="k">Email &amp; password</span>
+        <span class="v">{% if has_password %}<span class="ok-text">Set</span>{% else %}<span class="warn-text">Not set</span>{% endif %}</span>
+      </div>
+      {% for identity in identities %}
+      <div class="acct-row">
+        <span class="k">{{ identity.providerName }}<br><span class="acct-mono muted">{{ identity.email or "" }}</span></span>
+        <span class="v">
+          <form method="POST" action="{{ url_for('account') }}" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="unlink">
+            <input type="hidden" name="identity_id" value="{{ identity.id }}">
+            <button type="submit" class="acct-link">Disconnect</button>
+          </form>
+        </span>
+      </div>
+      {% endfor %}
+
+      {% set connectable = signin_providers | reject("in", linked) | list %}
+      {% if connectable %}
+      <div class="acct-provider-btns">
+        {% for p in connectable %}
+          <a class="fly-btn fly-btn-ghost" href="{{ url_for('oauth_login_api.authorize', provider=p, flow='console', link=1) }}">
+            Connect {{ "Google" if p == "google" else "Microsoft" }}
+          </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+
+    <!-- Password -->
+    <section class="fly-panel acct-card" aria-labelledby="pw-h">
+      <h2 id="pw-h">{% if has_password %}Change password{% else %}Set a password{% endif %}</h2>
+      <p class="lede">
+        {% if has_password %}At least 8 characters.{% else %}You signed up with Google or Microsoft. Add a password to also sign in with your email.{% endif %}
+      </p>
+      <form method="POST" action="{{ url_for('account') }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="password">
+        {% if has_password %}
+        <div class="acct-field">
+          <label for="current_password">Current password</label>
+          <input class="acct-input" type="password" id="current_password" name="current_password" autocomplete="current-password" required>
+        </div>
+        {% endif %}
+        <div class="acct-field">
+          <label for="new_password">New password</label>
+          <input class="acct-input" type="password" id="new_password" name="new_password" minlength="8" autocomplete="new-password" required>
+        </div>
+        <div class="acct-field">
+          <label for="confirm_password">Confirm new password</label>
+          <input class="acct-input" type="password" id="confirm_password" name="confirm_password" minlength="8" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="fly-btn">{% if has_password %}Update password{% else %}Set password{% endif %}</button>
+      </form>
+    </section>
+
+  </div>
+
+  <!-- Trips -->
+  <section class="fly-panel acct-card" style="margin-top:1.1rem" aria-labelledby="trips-h">
+    <h2 id="trips-h">Your trips</h2>
+    <p class="lede">A trip is booked when it carries the airline's confirmation; a hotel is reserved when it carries the hotel's.</p>
+    {% if trips %}
+    <div class="acct-table-wrap">
+      <table class="acct-table">
+        <thead><tr><th>Destination</th><th>Dates</th><th>Status</th><th>Flight</th><th>Hotel</th></tr></thead>
+        <tbody>
+        {% for t in trips %}
+          <tr>
+            <td>{{ t.destination }}</td>
+            <td class="acct-mono">{{ t.start }} → {{ t.end }}</td>
+            <td>{{ t.status | capitalize }}</td>
+            <td>
+              {% if t.flight_ref %}
+                <span class="ok-text">Ticketed</span> <span class="acct-mono">{{ t.flight_ref }}</span><br>
+                <span class="muted">{{ t.airline }}{% if t.round_trip %} · round trip{% endif %}</span>
+              {% elif t.airline %}
+                <span class="muted">{{ t.airline }} — not booked</span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td>
+              {% if t.hotel_reserved %}
+                <span class="ok-text">Reserved</span> <span class="acct-mono">{{ t.hotel_ref or "" }}</span><br><span class="muted">{{ t.hotel }}</span>
+              {% elif t.hotel %}
+                <span class="muted">{{ t.hotel }} — not reserved</span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="muted">No trips yet. <a href="{{ app_url }}">Plan one in the app</a>.</p>
+    {% endif %}
+  </section>
+
+  <!-- Recent sign-ins -->
+  <section class="fly-panel acct-card" style="margin-top:1.1rem" aria-labelledby="sessions-h">
+    <h2 id="sessions-h">Recent sign-ins to the app</h2>
+    <p class="lede">For your information. If you don't recognise one, change your password.</p>
+    {% if sessions %}
+    <div class="acct-table-wrap">
+      <table class="acct-table">
+        <thead><tr><th>When (UTC)</th><th>Browser</th><th>IP address</th></tr></thead>
+        <tbody>
+        {% for s in sessions %}
+          <tr>
+            <td class="acct-mono">{{ s._created_at.strftime("%Y-%m-%d %H:%M") if s._created_at else "—" }}</td>
+            <td>{{ s._browser or "Unknown" }}</td>
+            <td class="acct-mono">{{ s._ip_address or "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="muted">No app sign-ins recorded yet.</p>
+    {% endif %}
+  </section>
+
+</div>
+{% endblock %}

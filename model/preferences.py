@@ -27,6 +27,9 @@ class TravelPreference(db.Model, RowMixin):
     _cost_sensitivity = db.Column(db.String(30), nullable=False, default="balanced")
     _budget_threshold_per_day = db.Column(db.Float, nullable=True)
     _dietary_restrictions = db.Column(db.String(512), nullable=True)
+    # IATA code of the airport trips start from when the request doesn't say,
+    # e.g. "SAN". Null means "not set" — the planner then asks or infers.
+    _home_airport = db.Column(db.String(8), nullable=True)
 
     # Behavioural signals the app learns from (early-flight bookings, premium
     # vs budget choices) plus any preference the UI adds later.
@@ -46,6 +49,7 @@ class TravelPreference(db.Model, RowMixin):
         "cost_sensitivity": "_cost_sensitivity",
         "budget_threshold_per_day": "_budget_threshold_per_day",
         "dietary_restrictions": "_dietary_restrictions",
+        "home_airport": "_home_airport",
         "learning_data": "_learning_data",
         "created_at": "_created_at",
         "updated_at": "_updated_at",
@@ -131,6 +135,33 @@ class ClientCompany(db.Model, RowMixin):
             "notes": self._notes,
             "createdAt": self.read()["created_at"],
         }
+
+
+def ensurePreferenceColumns():
+    """
+    Add columns introduced after a database was first created.
+
+    db.create_all() creates missing tables but never alters existing ones, so a
+    database created before a column existed would fail every preferences query
+    with "no such column". This adds what's missing and touches nothing else —
+    safe to run on every startup, on SQLite locally and MySQL in production.
+    """
+    from sqlalchemy import inspect, text
+
+    added = {
+        "_home_airport": "VARCHAR(8)",
+    }
+    with app.app_context():
+        inspector = inspect(db.engine)
+        if "travel_preferences" not in inspector.get_table_names():
+            return  # create_all will build it with every column
+        existing = {column["name"] for column in inspector.get_columns("travel_preferences")}
+        for name, sql_type in added.items():
+            if name not in existing:
+                with db.engine.begin() as connection:
+                    connection.execute(text(
+                        f"ALTER TABLE travel_preferences ADD COLUMN {name} {sql_type}"))
+                print(f"Added column travel_preferences.{name}")
 
 
 def initPreferences():

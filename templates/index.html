@@ -93,7 +93,10 @@
       on <strong>port 8080</strong> from <strong>port 8659</strong>.
     </p>
     <div class="fly-hero-actions">
-      <a class="fly-btn" href="http://localhost:8080">Open the app</a>
+      <a class="fly-btn" href="{{ app_url }}">Open the app</a>
+      {% if current_user.is_authenticated %}
+        <a class="fly-btn fly-btn-ghost" href="{{ url_for('account') }}">Your account</a>
+      {% endif %}
       {% if current_user.is_authenticated and current_user.is_admin() %}
         <a class="fly-btn fly-btn-ghost" href="{{ url_for('utable') }}">Manage accounts</a>
       {% elif not current_user.is_authenticated %}
@@ -128,6 +131,28 @@
       <div class="l">Active sessions</div>
     </div>
   </div>
+
+  {% if current_user.is_authenticated and current_user.is_admin() %}
+  <!-- Admins only: the real reason hotels aren't available, in Duffel's words. -->
+  <div class="fly-panel" style="padding:1.1rem 1.3rem; margin:1.4rem 0;">
+    <h3 style="margin:0 0 .35rem; font-size:1rem;">Hotel booking (Duffel Stays)</h3>
+    {% if stays_status.checked_at is none %}
+      <p style="margin:0; color:var(--fly-muted); font-size:.9rem;">No hotel search since the server started. Plan a trip in the app to check.</p>
+    {% elif stays_status.ok %}
+      <p style="margin:0; font-size:.9rem;"><span style="color:var(--fly-success); font-weight:700;">Working</span> · last search {{ stays_status.checked_at }}</p>
+    {% else %}
+      <p style="margin:0; font-size:.9rem;">
+        <span style="color:var(--fly-danger); font-weight:700;">
+          {% if stays_status.reason == "not_enabled" %}Not enabled on the Duffel account{% elif stays_status.reason == "network_error" %}Duffel unreachable from this server{% else %}Failing{% endif %}
+        </span> · {{ stays_status.checked_at }}
+      </p>
+      {% if stays_status.message %}<p style="margin:.35rem 0 0; color:var(--fly-muted); font-size:.85rem;">Duffel said: <code>{{ stays_status.message }}</code></p>{% endif %}
+      {% if stays_status.reason == "not_enabled" %}
+        <p style="margin:.35rem 0 0; color:var(--fly-muted); font-size:.85rem;">Ask Duffel to enable Stays for this account (Duffel dashboard or support). Flights are unaffected.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
 
   <h2 class="fly-section-title">API surface</h2>
   <p class="fly-section-sub">Everything the frontend calls, grouped by what it does.</p>

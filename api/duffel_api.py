@@ -29,7 +29,7 @@ def _client_ip():
 @duffel_api.route('/status', methods=['GET'])
 @token_required()
 def status():
-    """Report what's available, so the UI can label real vs simulated flights."""
+    """Report whether live search and booking are available."""
     return jsonify({
         "configured": is_configured(),
         "live": is_live(),
@@ -44,24 +44,51 @@ def search():
     """
     Search real flight offers. Read-only — never charges.
 
-    Returns ``{offers, source}`` where source is "duffel" (real inventory) or
-    "unavailable" (the caller should fall back to its local flight generator).
+    Returns ``{offers, source, tripType}``. ``source`` is "duffel" (real airline
+    inventory) or "unavailable" — in which case there are no offers and the
+    caller shows none; nothing is generated in their place.
+
+    With a ``returnDate`` the search is for a round trip, and each offer's price
+    covers both directions. If the airlines return no round-trip fares at all,
+    the outbound is searched on its own and ``returnUnavailable`` is set so the
+    UI can say the return still needs booking, rather than showing nothing.
     """
     data = request.get_json(silent=True) or {}
 
-    offers = search_offers(
+    departure_date = data.get("departureDate") or data.get("departure_date")
+    return_date = data.get("returnDate") or data.get("return_date") or None
+    # A return before the outbound can't be priced; treat it as one-way rather
+    # than sending Duffel a request it will reject.
+    if return_date and departure_date and str(return_date) < str(departure_date):
+        return_date = None
+
+    params = dict(
         origin=(data.get("origin") or "").strip().upper(),
         destination=(data.get("destination") or "").strip().upper(),
-        departure_date=data.get("departureDate") or data.get("departure_date"),
-        return_date=data.get("returnDate") or data.get("return_date"),
+        departure_date=departure_date,
         passengers=data.get("passengers") or 1,
         cabin_class=data.get("cabinClass") or "economy",
         airline=(data.get("airline") or None),
     )
 
+    offers = search_offers(return_date=return_date, **params)
+    return_unavailable = False
+    if return_date and offers == []:
+        # Reachable, but nothing sold as a round trip. Only retried in this case:
+        # if Duffel itself couldn't be reached (None), asking again won't help.
+        one_way = search_offers(return_date=None, **params)
+        if one_way:
+            offers, return_unavailable = one_way, True
+
     if offers is None:
         return jsonify({"offers": [], "source": "unavailable"}), 200
-    return jsonify({"offers": offers, "source": "duffel", "live": is_live()}), 200
+    return jsonify({
+        "offers": offers,
+        "source": "duffel",
+        "live": is_live(),
+        "tripType": "round_trip" if (return_date and not return_unavailable) else "one_way",
+        "returnUnavailable": return_unavailable,
+    }), 200
 
 
 @duffel_api.route('/offer', methods=['POST'])

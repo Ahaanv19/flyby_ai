@@ -10,7 +10,7 @@ Endpoints:
     POST /functions/v1/twofa-send-sms         send a verification code
     POST /functions/v1/twofa-verify-sms       check a verification code
     POST /functions/v1/twofa-disable          turn 2FA off
-    GET  /functions/v1/search-travel          flight / hotel / ground search
+    GET  /functions/v1/search-travel          flight / hotel search
     POST /functions/v1/transcribe             voice note -> text
     POST /functions/v1/audit-login            record a sign-in from the client
 
@@ -287,10 +287,10 @@ def twofa_disable():
 @functions_api.route('/search-travel', methods=['GET', 'POST'])
 def search_travel():
     """
-    Search flights, hotels and ground transport.
+    Search flights and hotels.
 
     Accepts parameters from the query string (how the search box calls it) or a
-    JSON body, and returns ``{flights, hotels, ground}``.
+    JSON body, and returns ``{flights, hotels}``.
     """
     if request.method == 'POST':
         body = request.get_json(silent=True) or {}
@@ -301,8 +301,8 @@ def search_travel():
         return _clean(request.args.get(name) or body.get(name), limit)
 
     search_type = param("type", 20) or "all"
-    if search_type not in ("flights", "hotels", "ground", "all"):
-        return jsonify({"error": "Invalid search type. Use: flights, hotels, ground, or all."}), 400
+    if search_type not in ("flights", "hotels", "all"):
+        return jsonify({"error": "Invalid search type. Use: flights, hotels, or all."}), 400
 
     check_in, check_out, date = param("checkIn", 10), param("checkOut", 10), param("date", 10)
     for label, value in (("check-in", check_in), ("check-out", check_out), ("date", date)):

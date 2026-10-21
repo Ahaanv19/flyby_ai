@@ -5,8 +5,9 @@ Real airline inventory and real orders through Duffel. Two very different risk
 levels live here, and the code treats them differently:
 
 * **Search & pricing are read-only** — an offer request or offer lookup never
-  charges anything, so they run freely (and fall back to the local generator
-  when Duffel is unavailable, so the app always shows flights).
+  charges anything, so they run freely. When Duffel is unavailable the caller
+  gets nothing back and says so; there is no generated substitute, because a
+  flight that didn't come from an airline is a flight that may not exist.
 
 * **Booking creates a real order.** With a ``duffel_live_`` token that charges
   real money and issues a real ticket, so it is gated three ways: it is disabled
@@ -44,10 +45,11 @@ def _request_with_retries(method, url, **kwargs):
     Returns the ``requests.Response`` on success, or ``None`` if every attempt
     failed to reach Duffel.
     """
+    timeout = kwargs.pop("timeout", TIMEOUT)
     last_error = None
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         try:
-            return requests.request(method, url, timeout=TIMEOUT, **kwargs)
+            return requests.request(method, url, timeout=timeout, **kwargs)
         except (requests.ConnectionError, requests.Timeout) as error:
             last_error = error
             if attempt < _RETRY_ATTEMPTS:
@@ -90,22 +92,78 @@ def _url(path):
 # ---------------------------------------------------------------------------
 
 def _iso_duration_to_label(iso):
-    """Turn an ISO-8601 duration like 'PT5H30M' into '5h 30m'."""
-    if not iso or not iso.startswith("PT"):
+    """
+    Turn an ISO-8601 duration like 'PT5H30M' into '5h 30m'.
+
+    Journeys of a day or more arrive as 'P1DT2H10M'. Those used to fall through
+    as an empty string, so the longest itineraries — the ones where the duration
+    matters most — showed no duration at all. Days are folded into hours.
+    """
+    if not iso or not iso.startswith("P"):
         return ""
-    body = iso[2:]
-    hours = minutes = 0
+    days = hours = minutes = 0
     num = ""
-    for ch in body:
-        if ch.isdigit():
+    in_time = False
+    for ch in iso[1:]:
+        if ch == "T":
+            in_time, num = True, ""
+        elif ch.isdigit():
             num += ch
-        elif ch == "H":
-            hours = int(num or 0)
+        elif ch == "D" and not in_time:
+            days, num = int(num or 0), ""
+        elif ch == "H" and in_time:
+            hours, num = int(num or 0), ""
+        elif ch == "M" and in_time:
+            minutes, num = int(num or 0), ""
+        else:
             num = ""
-        elif ch == "M":
-            minutes = int(num or 0)
-            num = ""
-    return f"{hours}h {minutes:02d}m"
+    if not (days or hours or minutes):
+        return ""
+    return f"{days * 24 + hours}h {minutes:02d}m"
+
+
+def _day_offset(depart_iso, arrive_iso):
+    """
+    How many calendar days after departure a flight lands (0, 1, 2…).
+
+    "7:45 PM → 8:05 AM" reads as an overnight hop but can be a two-day journey;
+    without this the traveler can't tell which day they arrive.
+    """
+    try:
+        from datetime import date
+        d = date.fromisoformat((depart_iso or "")[:10])
+        a = date.fromisoformat((arrive_iso or "")[:10])
+        return max(0, (a - d).days)
+    except ValueError:
+        return 0
+
+
+def _slice_summary(flight_slice, owner):
+    """The traveler-facing facts about one direction of travel."""
+    segments = (flight_slice or {}).get("segments") or []
+    first_seg = segments[0] if segments else {}
+    last_seg = segments[-1] if segments else {}
+    carrier = first_seg.get("marketing_carrier") or owner or {}
+    stops = max(0, len(segments) - 1)
+    return {
+        "flightNumber": f"{carrier.get('iata_code', '')}{first_seg.get('marketing_carrier_flight_number') or ''}".strip(),
+        "carrier": carrier,
+        "departTime": _time_label(first_seg.get("departing_at")),
+        "arriveTime": _time_label(last_seg.get("arriving_at")),
+        "departingAt": first_seg.get("departing_at"),
+        "arrivingAt": last_seg.get("arriving_at"),
+        "arriveDayOffset": _day_offset(first_seg.get("departing_at"), last_seg.get("arriving_at")),
+        "duration": _iso_duration_to_label((flight_slice or {}).get("duration")),
+        "stops": stops,
+        # Every connection point, in order — a two-stop itinerary names both.
+        "stopCities": [
+            (seg.get("destination") or {}).get("iata_code")
+            for seg in segments[:-1]
+            if (seg.get("destination") or {}).get("iata_code")
+        ],
+        "origin": (first_seg.get("origin") or {}).get("iata_code") or "",
+        "destination": (last_seg.get("destination") or {}).get("iata_code") or "",
+    }
 
 
 def _time_label(iso_datetime):
@@ -128,22 +186,16 @@ def normalize_offer(offer):
 
     Carries the Duffel ``id`` (the offer id needed to book) and ``expiresAt``
     (offers expire — the frontend must book before then or re-search).
+
+    A round-trip offer has two slices. The top-level fields describe the
+    outbound journey, as they always have; the ``return*`` fields describe the
+    journey home. The price is Duffel's total for everything in the offer.
     """
     slices = offer.get("slices") or []
-    first_slice = slices[0] if slices else {}
-    segments = first_slice.get("segments") or []
-    first_seg = segments[0] if segments else {}
-    last_seg = segments[-1] if segments else {}
-
     owner = offer.get("owner") or {}
-    carrier = first_seg.get("marketing_carrier") or owner
-    flight_number = first_seg.get("marketing_carrier_flight_number") or ""
-
-    stops = max(0, len(segments) - 1)
-    stop_city = None
-    if stops:
-        mid = segments[0].get("destination") or {}
-        stop_city = mid.get("iata_code")
+    out = _slice_summary(slices[0] if slices else {}, owner)
+    back = _slice_summary(slices[1], owner) if len(slices) > 1 else None
+    carrier = out["carrier"]
 
     try:
         price = round(float(offer.get("total_amount") or 0), 2)
@@ -151,37 +203,62 @@ def normalize_offer(offer):
         price = 0.0
 
     tags = []
-    if stops == 0:
+    if out["stops"] == 0:
         tags.append("Nonstop")
 
     # Order creation must echo back the offer's own passenger ids, so carry them.
     passenger_ids = [p.get("id") for p in (offer.get("passengers") or []) if p.get("id")]
 
-    return {
+    normalized = {
         "id": offer.get("id"),                       # Duffel offer id — book with this
         "passengerIds": passenger_ids,               # required when creating the order
         "expiresAt": offer.get("expires_at"),        # offer expiry
         "airline": owner.get("name") or carrier.get("name") or "Airline",
         "airlineLogo": owner.get("logo_symbol_url"),
         "airlineCode": owner.get("iata_code") or carrier.get("iata_code") or "",
-        "flightNumber": f"{carrier.get('iata_code', '')}{flight_number}".strip(),
-        "departTime": _time_label(first_seg.get("departing_at")),
-        "arriveTime": _time_label(last_seg.get("arriving_at")),
-        "departureTime": _time_label(first_seg.get("departing_at")),
-        "arrivalTime": _time_label(last_seg.get("arriving_at")),
-        "departingAt": first_seg.get("departing_at"),
-        "arrivingAt": last_seg.get("arriving_at"),
-        "duration": _iso_duration_to_label(first_slice.get("duration")),
-        "stops": stops,
-        "stopCity": stop_city,
+        "flightNumber": out["flightNumber"],
+        "departTime": out["departTime"],
+        "arriveTime": out["arriveTime"],
+        "departureTime": out["departTime"],
+        "arrivalTime": out["arriveTime"],
+        "departingAt": out["departingAt"],
+        "arrivingAt": out["arrivingAt"],
+        "arriveDayOffset": out["arriveDayOffset"],
+        "duration": out["duration"],
+        "stops": out["stops"],
+        "stopCity": out["stopCities"][0] if out["stopCities"] else None,
+        "stopCities": out["stopCities"],
         "price": price,
+        # The fare exactly as the airline quoted it ("1021.40"). Payments must
+        # echo this back, so it is kept as the original string rather than
+        # rebuilt from the rounded float above.
+        "totalAmount": offer.get("total_amount"),
         "currency": offer.get("total_currency") or "USD",
-        "origin": (first_seg.get("origin") or {}).get("iata_code") or "",
-        "destination": (last_seg.get("destination") or {}).get("iata_code") or "",
+        "origin": out["origin"],
+        "destination": out["destination"],
         "cabinClass": (offer.get("cabin_class") or "economy"),
         "passengerCount": len(offer.get("passengers") or []) or 1,
+        "tripType": "round_trip" if back else "one_way",
+        # Some airlines won't issue a ticket without passport details (most
+        # international routes). The booking form must collect them when set.
+        "identityDocumentsRequired": bool(offer.get("passenger_identity_documents_required")),
         "source": "duffel",
     }
+    if back:
+        normalized.update({
+            "returnFlightNumber": back["flightNumber"],
+            "returnDepartTime": back["departTime"],
+            "returnArriveTime": back["arriveTime"],
+            "returnDepartingAt": back["departingAt"],
+            "returnArrivingAt": back["arrivingAt"],
+            "returnArriveDayOffset": back["arriveDayOffset"],
+            "returnDuration": back["duration"],
+            "returnStops": back["stops"],
+            "returnStopCities": back["stopCities"],
+            "returnOrigin": back["origin"],
+            "returnDestination": back["destination"],
+        })
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +270,8 @@ def search_offers(origin, destination, departure_date, return_date=None,
     """
     Search real flight offers. Read-only — never charges.
 
-    Returns a list of normalized offers, or None on any failure so the caller
-    can fall back to the local generator.
+    Returns a list of normalized offers, or None on any failure. There is no
+    generated fallback: the caller shows nothing and explains why.
 
     When ``airline`` is given (a carrier name or IATA code, e.g. "emirates" or
     "EK"), the results are filtered to that carrier and returned cheapest-first —
@@ -223,10 +300,13 @@ def search_offers(origin, destination, departure_date, return_date=None,
         }
     }
 
+    # A round trip is priced by more airlines over more combinations, so it takes
+    # noticeably longer than a one-way. A read timeout that suits a one-way
+    # would cut these off and report "unreachable" for a search that was working.
     response = _request_with_retries(
         "POST",
         _url("/air/offer_requests?return_offers=true"),
-        json=payload, headers=_headers(),
+        json=payload, headers=_headers(), timeout=75 if return_date else 45,
     )
     if response is None:
         return None
@@ -260,6 +340,18 @@ def search_offers(origin, destination, departure_date, return_date=None,
     if exact:
         normalized = exact
 
+    # The same for the journey home: a round trip searched from LAX should come
+    # back to LAX, not to Ontario (ONT) 50 miles away. Prefer offers that do;
+    # keep the others only if no offer returns to the airport the traveler left.
+    if return_date:
+        home_again = [
+            o for o in normalized
+            if (o.get("returnOrigin") or "").upper() == req_d
+            and (o.get("returnDestination") or "").upper() == req_o
+        ]
+        if home_again:
+            normalized = home_again
+
     # Airline-filtered search: keep only the requested carrier (matched on name
     # or IATA code), cheapest first. Returns an empty list when that airline
     # doesn't serve the route, so the caller can say so honestly.
@@ -287,7 +379,9 @@ def search_offers(origin, destination, departure_date, return_date=None,
     seen = set()
     diverse = []
     for o in normalized:
-        key = (o.get("airlineCode"), o.get("stops"))
+        # Stops in each direction: a nonstop out with a two-stop return is a
+        # different trip from nonstop both ways, and both deserve a slot.
+        key = (o.get("airlineCode"), o.get("stops"), o.get("returnStops"))
         if key not in seen:
             seen.add(key)
             diverse.append(o)
@@ -450,12 +544,45 @@ def create_order(offer_id, passengers, *, confirmed=False, three_d_secure_sessio
     for passenger, pid in zip(passengers, offer_passenger_ids):
         passenger["id"] = pid
 
+    # The airline decides whether it needs passport details. Sending the order
+    # without them when it does is a guaranteed rejection after the traveler has
+    # already authenticated their card, so stop here with something they can fix.
+    if offer.get("identityDocumentsRequired"):
+        for index, passenger in enumerate(passengers, start=1):
+            documents = passenger.get("identity_documents") or []
+            complete = any(
+                d.get("unique_identifier") and d.get("issuing_country_code") and d.get("expires_on")
+                for d in documents
+            )
+            if not complete:
+                raise BookingError(
+                    f"This airline requires passport details for traveler {index} "
+                    f"(number, issuing country and expiry date).",
+                    "identity_document_required", 400,
+                )
+    else:
+        # Not asked for — don't send documents the airline didn't request.
+        for passenger in passengers:
+            passenger.pop("identity_documents", None)
+
     # Duffel Payments (traveler's card) when a 3DS session is supplied; otherwise
     # the balance model. The card path is the default for a real product — the
     # traveler pays, Flyby never fronts money or handles card data.
     payment_type = current_app.config.get("DUFFEL_PAYMENT_TYPE", "card")
+    # Duffel requires the amount and currency on every payment, and they must
+    # match the offer's total. Use the offer's own figure, re-fetched above — not
+    # anything the client sent.
+    amount = offer.get("totalAmount") or f"{offer['price']:.2f}"
     if three_d_secure_session_id:
-        payment = {"type": "card", "three_d_secure_session_id": three_d_secure_session_id}
+        # The card payment used to be sent with no amount or currency. Duffel
+        # rejects that as an invalid request, so a traveler would have entered
+        # their card, passed 3-D Secure, and then had the booking fail.
+        payment = {
+            "type": "card",
+            "amount": str(amount),
+            "currency": offer["currency"],
+            "three_d_secure_session_id": three_d_secure_session_id,
+        }
     elif payment_type == "card":
         # Card model is configured but the frontend didn't complete the card +
         # 3DS step, so there's nothing to charge — refuse rather than silently
@@ -467,7 +594,7 @@ def create_order(offer_id, passengers, *, confirmed=False, three_d_secure_sessio
     else:
         payment = {
             "type": "balance",
-            "amount": str(offer["price"]),
+            "amount": str(amount),
             "currency": offer["currency"],
         }
 

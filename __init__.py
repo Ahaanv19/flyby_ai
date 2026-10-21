@@ -150,11 +150,18 @@ _IS_PRODUCTION = (
     os.environ.get('FLASK_ENV') == 'production'
     or os.environ.get('ENV', '').lower() in ('prod', 'production')
 )
+# Exposed so request handlers can refuse development-only conveniences in a
+# deployed environment, whatever database it happens to use.
+app.config['IS_PRODUCTION'] = _IS_PRODUCTION
+
 PUBLIC_BACKEND_URL = (
     os.environ.get('PUBLIC_BACKEND_URL')
     or ('https://hungerheros.opencodingsociety.com' if _IS_PRODUCTION
         else 'http://localhost:8659')
 ).rstrip('/')
+# Read by anything that hands Flyby's address to an outside service — e.g. the
+# Plaid webhook, so new card charges are pulled in without the app open.
+app.config['PUBLIC_BACKEND_URL'] = PUBLIC_BACKEND_URL
 PUBLIC_APP_URL = (
     os.environ.get('APP_URL')
     or ('https://rbrandt2006-hash.github.io/flyby' if _IS_PRODUCTION
@@ -184,14 +191,13 @@ app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY') or None
 app.config['PLAID_CLIENT_ID'] = os.environ.get('PLAID_CLIENT_ID') or None
 app.config['PLAID_SECRET'] = os.environ.get('PLAID_SECRET') or None
 app.config['PLAID_ENV'] = (os.environ.get('PLAID_ENV') or 'sandbox').lower()
-# Required only for OAuth banks (Chase, Wells Fargo, Capital One). Plaid demands
-# HTTPS here, so it is derived rather than set in .env: production gets the real
-# https callback, local stays None — which is correct, because sandbox's test
-# banks don't use OAuth. One .env, right behaviour in both places.
-app.config['PLAID_REDIRECT_URI'] = (
-    os.environ.get('PLAID_REDIRECT_URI')
-    or (f'{PUBLIC_BACKEND_URL}/auth/plaid/callback' if _IS_PRODUCTION else None)
-)
+# Not needed on the web: OAuth banks (Chase, Capital One, Amex…) sign in through
+# a pop-up that Plaid Link opens itself — verified against Plaid's sandbox OAuth
+# bank. Plaid only wants a redirect URI for mobile apps and webviews, and then it
+# must be registered in the Plaid dashboard AND have a page that resumes Link;
+# sending an unregistered one makes Plaid refuse to start Link at all
+# (INVALID_FIELD). So it is only sent when explicitly set.
+app.config['PLAID_REDIRECT_URI'] = os.environ.get('PLAID_REDIRECT_URI') or None
 
 # ---------------------------------------------------------------------------
 # Google Calendar — meeting-to-trip detection and trip calendar sync

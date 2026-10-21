@@ -117,14 +117,30 @@ def create_link_token(user_id, client_name="Flyby AI"):
         "country_codes": ["US"],
         "language": "en",
     }
-    # Most major banks (Chase, Wells Fargo, Capital One) authenticate via OAuth
-    # and hand control back to a registered HTTPS redirect. Without this they
-    # simply won't appear as linkable. Sandbox's test banks don't use OAuth,
-    # which is why it works without it — so only send it when one is configured.
+    # OAuth banks (Chase, Capital One, Amex…) work on the web without this —
+    # Link opens the bank's sign-in in a pop-up. A redirect URI is for mobile
+    # apps, must be registered in the Plaid dashboard, and makes Plaid refuse
+    # to start Link if it isn't — so it is only sent when explicitly configured.
     redirect_uri = current_app.config.get("PLAID_REDIRECT_URI")
     if redirect_uri:
         payload["redirect_uri"] = redirect_uri
+    # Where Plaid announces new charges, so they're pulled in even while nobody
+    # has the app open. Plaid can only reach a public HTTPS address, so this is
+    # set in production and skipped on a laptop.
+    backend_url = (current_app.config.get("PUBLIC_BACKEND_URL") or "").rstrip("/")
+    if backend_url.startswith("https://"):
+        payload["webhook"] = f"{backend_url}/api/plaid/webhook"
     return _post("/link/token/create", payload)
+
+
+def get_item(access_token):
+    """Which linked account a token belongs to (``item.item_id``)."""
+    return _post("/item/get", {"access_token": access_token})
+
+
+def remove_item(access_token):
+    """Revoke Flyby's access to a linked account at Plaid."""
+    return _post("/item/remove", {"access_token": access_token})
 
 
 def exchange_public_token(public_token):
@@ -158,52 +174,66 @@ def sync_transactions(access_token, cursor=None):
 # Turning card activity into Flyby expenses
 # ---------------------------------------------------------------------------
 
-# Plaid's category strings mapped onto the categories Flyby's expense UI uses.
-_CATEGORY_MAP = {
+# Plaid's categories (its "personal finance category" taxonomy) that count as
+# travel spend, mapped onto Flyby's expense categories. Anything not listed is
+# not a travel expense: loan payments, interest, transfers, income, tax,
+# shopping, groceries, subscriptions — the bulk of what a card carries. Those
+# are neither stored nor offered.
+_TRAVEL_CATEGORIES = {
     "TRAVEL_FLIGHTS": "flight",
     "TRAVEL_LODGING": "hotel",
-    "TRAVEL_TAXIS_AND_RIDE_SHARES": "transportation",
-    "TRAVEL_PUBLIC_TRANSIT": "transportation",
-    "TRAVEL_PARKING": "transportation",
     "TRAVEL_RENTAL_CARS": "transportation",
-    "TRAVEL_CAR_SERVICE": "transportation",
+    "TRAVEL_OTHER_TRAVEL": "transportation",
+    "TRANSPORTATION_TAXIS_AND_RIDE_SHARES": "transportation",
+    "TRANSPORTATION_PUBLIC_TRANSIT": "transportation",
+    "TRANSPORTATION_PARKING": "transportation",
+    "TRANSPORTATION_TOLLS": "transportation",
+    "TRANSPORTATION_GAS": "transportation",
+    "TRANSPORTATION_BIKES_AND_SCOOTERS": "transportation",
+    "TRANSPORTATION_OTHER_TRANSPORTATION": "transportation",
     "FOOD_AND_DRINK_RESTAURANT": "meals",
     "FOOD_AND_DRINK_FAST_FOOD": "meals",
     "FOOD_AND_DRINK_COFFEE": "meals",
-    "FOOD_AND_DRINK_GROCERIES": "meals",
-    "ENTERTAINMENT": "entertainment",
+    "FOOD_AND_DRINK_OTHER_FOOD_AND_DRINK": "meals",
+    "ENTERTAINMENT_SPORTING_EVENTS_AMUSEMENT_PARKS_AND_MUSEUMS": "entertainment",
 }
 
-# Fallback keyword matching for merchants when Plaid gives no useful category.
+_OFFERED_CATEGORIES = set(_TRAVEL_CATEGORIES.values())
+
+# Only when Plaid gives no category at all: recognise travel merchants by name.
 _MERCHANT_HINTS = [
-    ("flight", ("airline", "airways", "delta", "united", "american air", "jetblue",
-                "southwest", "alaska air", "lufthansa", "emirates", "qatar")),
-    ("hotel", ("hotel", "inn", "marriott", "hilton", "hyatt", "westin", "sheraton",
+    ("flight", ("airline", "airways", "air lines", "delta", "united", "american air", "jetblue",
+                "southwest", "alaska air", "lufthansa", "emirates", "qatar", "duffel")),
+    ("hotel", ("hotel", " inn", "marriott", "hilton", "hyatt", "westin", "sheraton",
                "airbnb", "lodging", "resort")),
-    ("transportation", ("uber", "lyft", "taxi", "cab", "metro", "transit", "parking",
+    ("transportation", ("uber", "lyft", "taxi", "cab ", "metro", "transit", "parking",
                         "hertz", "avis", "enterprise rent")),
     ("meals", ("restaurant", "cafe", "coffee", "starbucks", "grill", "kitchen",
-               "pizza", "sushi", "bar ")),
+               "pizza", "sushi")),
 ]
 
 
-def categorize(transaction):
-    """Best-effort Flyby category for a Plaid transaction."""
-    detailed = ((transaction.get("personal_finance_category") or {}).get("detailed") or "").upper()
-    if detailed in _CATEGORY_MAP:
-        return _CATEGORY_MAP[detailed]
+def travel_category(transaction):
+    """
+    The Flyby expense category for a travel charge, or None if it isn't travel.
 
-    primary = ((transaction.get("personal_finance_category") or {}).get("primary") or "").upper()
-    if primary == "TRAVEL":
-        return "transportation"
-    if primary == "FOOD_AND_DRINK":
-        return "meals"
-
+    Plaid's own category decides when it has one — a transaction it files as a
+    tax payment is not treated as a hotel stay because "Hotel" is in the name.
+    """
+    pfc = transaction.get("personal_finance_category") or {}
+    detailed = (pfc.get("detailed") or "").upper()
+    if detailed or pfc.get("primary"):
+        return _TRAVEL_CATEGORIES.get(detailed)
     name = (transaction.get("merchant_name") or transaction.get("name") or "").lower()
     for category, hints in _MERCHANT_HINTS:
         if any(hint in name for hint in hints):
             return category
-    return "office"
+    return None
+
+
+def categorize(transaction):
+    """Best-effort Flyby category for a charge (``office`` when it isn't travel)."""
+    return travel_category(transaction) or "office"
 
 
 def match_trip(transaction_date, trips):
@@ -273,3 +303,152 @@ def build_expenses(transactions, trips=None):
         if expense:
             out.append(expense)
     return out
+
+
+# ---------------------------------------------------------------------------
+# The import engine — runs on the server, per linked account
+# ---------------------------------------------------------------------------
+
+_MAX_PAGES = 20  # Plaid returns up to 100 changes per page
+
+
+def _trip_windows(user_uuid):
+    """
+    The user's trips as date windows to attribute charges to.
+
+    Each window is widened by a day on either side: a charge the evening before
+    departure (airport parking, a ride to the airport) or on the morning after
+    landing home belongs to the trip, and stored trip dates can sit a day off
+    once converted to UTC.
+    """
+    from datetime import date, timedelta
+    from model.trip import Trip
+
+    windows = []
+    for trip in Trip.query.filter_by(_user_id=user_uuid).all():
+        data = dict(getattr(trip, "_client_data", None) or {})
+        if data.get("status") in ("cancelled", "archived"):
+            continue
+        try:
+            start = date.fromisoformat((data.get("startDate") or "")[:10]) - timedelta(days=1)
+            end = date.fromisoformat((data.get("endDate") or "")[:10]) + timedelta(days=1)
+        except ValueError:
+            continue
+        windows.append({
+            "id": data.get("id") or trip.id,
+            "name": data.get("destination") or "Trip",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        })
+    return windows
+
+
+def offerable(rows, windows):
+    """
+    The stored charges to offer as expenses: those that fall during a trip.
+
+    A linked card — especially a personal one — carries everyday spending that
+    has nothing to do with travel. Only charges made during a trip (the day
+    before departure through the day after return) become expenses. The rest
+    stay stored and are checked again on every sync, so a trip added later
+    still picks up the charges from its dates.
+
+    Re-matches each row against the current trips, updating its trip as it goes.
+    """
+    chosen = []
+    for row in rows:
+        expense = dict(row._expense or {})
+        if expense.get("category") not in _OFFERED_CATEGORIES:
+            continue
+        trip = match_trip(expense.get("date"), windows)
+        if trip is None:
+            continue
+        if expense.get("tripId") != trip.get("id"):
+            expense["tripId"], expense["tripName"] = trip.get("id"), trip.get("name")
+            row._expense = expense
+        chosen.append(expense)
+    return chosen
+
+
+def pull_item(item):
+    """
+    Bring one linked account up to date: fetch every change since its cursor
+    and store the resulting expenses, undelivered. Returns an error code or None.
+
+    The cursor only advances after the charges it covers are safely stored, so a
+    failure part-way leaves the next pull to fetch the same changes again.
+    """
+    from __init__ import db
+    from model.base import utcnow
+    from model.plaid import PlaidTransaction
+
+    def fetch_all(start_cursor):
+        added, modified, removed = [], [], []
+        cursor = start_cursor
+        for _ in range(_MAX_PAGES):
+            data, error = sync_transactions(item._access_token, cursor)
+            if error:
+                return None, error
+            added += data.get("added") or []
+            modified += data.get("modified") or []
+            removed += data.get("removed") or []
+            cursor = data.get("next_cursor") or cursor
+            if not data.get("has_more"):
+                break
+        return (added, modified, removed, cursor), None
+
+    result, error = fetch_all(item._cursor)
+    for _ in range(3):
+        if error != "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION":
+            break
+        # The account changed while being read (Plaid is still applying an
+        # update). Plaid's instruction: start the whole read over.
+        time.sleep(1.5)
+        result, error = fetch_all(item._cursor)
+    if error:
+        item._last_error = str(error)[:255]
+        db.session.commit()
+        return error
+
+    added, modified, removed, next_cursor = result
+    windows = _trip_windows(item._user_id)
+
+    for txn in added + modified:
+        # Only posted charges become expenses. A pending charge is withdrawn and
+        # re-issued under a new id when it posts; importing both would file the
+        # same purchase twice. It is picked up once it posts.
+        if txn.get("pending"):
+            continue
+        txn_id = txn.get("transaction_id")
+        # Not travel spend: not stored. Flyby has no reason to keep someone's
+        # loan payments or grocery shopping. (If Plaid recategorised a stored
+        # charge as non-travel before it was filed, it is dropped.)
+        expense = to_expense(txn, windows) if travel_category(txn) else None
+        if not expense or not txn_id:
+            stale = PlaidTransaction.query.get(txn_id) if txn_id else None
+            if stale is not None and not stale._delivered:
+                db.session.delete(stale)
+            continue  # refunds, credits and non-travel spend aren't expenses
+        expense["externalId"] = txn_id
+        row = PlaidTransaction.query.get(txn_id)
+        if row is None:
+            db.session.add(PlaidTransaction(
+                id=txn_id, _user_id=item._user_id, _item_id=item._item_id,
+                _expense=expense, _delivered=False))
+        elif not row._delivered:
+            row._expense = expense  # not filed yet — take the latest details
+
+    for gone in removed:
+        row = PlaidTransaction.query.get(gone.get("transaction_id") or "")
+        if row is None:
+            continue
+        if row._delivered:
+            row._removed = True  # the app removes it if it hasn't been submitted
+        else:
+            db.session.delete(row)
+
+    item._cursor = next_cursor
+    item._last_synced_at = utcnow()
+    item._last_error = None
+    db.session.commit()
+    return None

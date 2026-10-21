@@ -50,6 +50,11 @@
     text-align: center; font-size: .84rem; color: var(--fly-muted);
   }
   .fly-foot a { text-decoration: none; font-weight: 700; }
+
+  .fly-or { display: flex; align-items: center; gap: .7rem; color: var(--fly-muted); font-size: .78rem;
+            margin: 1.2rem 0 1rem; text-transform: uppercase; letter-spacing: .06em; }
+  .fly-or::before, .fly-or::after { content: ""; flex: 1; height: 1px; background: var(--fly-border); }
+  .fly-provider { width: 100%; justify-content: center; margin-top: .55rem; padding: .78rem; }
 </style>
 {% endblock %}
 
@@ -83,8 +88,18 @@
       <button type="submit" class="fly-btn fly-submit">Sign in</button>
     </form>
 
+    {% if signin_providers %}
+      <div class="fly-or">or</div>
+      {% for p in signin_providers %}
+        <a class="fly-btn fly-btn-ghost fly-provider"
+           href="{{ url_for('oauth_login_api.authorize', provider=p, flow='console') }}">
+          Continue with {{ "Google" if p == "google" else "Microsoft" }}
+        </a>
+      {% endfor %}
+    {% endif %}
+
     <div class="fly-foot">
-      Looking for the app? <a href="http://localhost:8080">Open Flyby AI</a>
+      Looking for the app? <a href="{{ app_url }}">Open Flyby AI</a>
     </div>
 
   </div>

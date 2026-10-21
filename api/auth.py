@@ -9,6 +9,7 @@ Endpoints:
     POST /auth/v1/signup                       create an account and sign in
     POST /auth/v1/token?grant_type=password    sign in with email + password
     POST /auth/v1/token?grant_type=refresh_token   exchange a refresh token
+    POST /auth/v1/token?grant_type=oauth_code      finish a Google / Microsoft sign-in
     POST /auth/v1/logout                       revoke the current session
     GET  /auth/v1/user                         the signed-in user
     PUT  /auth/v1/user                         change email / password / metadata
@@ -151,6 +152,23 @@ def _provision_account(user, account_mode=None):
     return profile
 
 
+def _password_never_set(user):
+    try:
+        from model.identity import UserIdentity
+        return UserIdentity.password_was_never_set(user.uuid)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _mark_password_set(user):
+    """An account created by Google/Microsoft sign-in now has a password of its own."""
+    try:
+        from model.identity import UserIdentity
+        UserIdentity.mark_password_set(user.uuid)
+    except Exception:  # noqa: BLE001
+        db.session.rollback()
+
+
 def _validate_credentials(email, password, require_strong=False):
     """Return an error message for bad credentials, or None when they're fine."""
     if not email or not EMAIL_PATTERN.match(email):
@@ -222,6 +240,8 @@ def token():
         return _refresh_grant()
     if grant_type == "password":
         return _password_grant()
+    if grant_type == "oauth_code":
+        return _oauth_code_grant()
     return _error(f"Unsupported grant_type '{grant_type}'.", 400, "unsupported_grant_type")
 
 
@@ -245,6 +265,32 @@ def _password_grant():
     AuditLog.record(user.uuid, "login_success", True, ip_address=_client_ip(),
                     user_agent=request.headers.get("User-Agent", "")[:500])
 
+    return jsonify(session), 200
+
+
+def _oauth_code_grant():
+    """
+    Finish signing in with Google or Microsoft.
+
+    The provider redirect hands the app a one-time code (see
+    ``api.oauth_login``); this trades it for exactly the session a password
+    sign-in returns.
+    """
+    from api.oauth_login import redeem_login_code
+    data = request.get_json(silent=True) or {}
+    user, is_new_account = redeem_login_code(data.get("code") or "")
+    if user is None:
+        return _error("That sign-in has expired. Please try again.", 400, "invalid_grant")
+
+    _provision_account(user)
+    session = _session_payload(user)
+    _track_session(user, session["access_token"])
+    user.touch_login()
+    AuditLog.record(user.uuid, "login_success", True, ip_address=_client_ip(), method="oauth",
+                    user_agent=request.headers.get("User-Agent", "")[:500])
+    # Lets the app send someone who just signed up through the same setup steps
+    # an email sign-up gets.
+    session["new_account"] = is_new_account
     return jsonify(session), 200
 
 
@@ -325,11 +371,16 @@ def update_user():
             payload, error = decode_token(recovery, expected="recovery")
             if error or payload.get("uuid") != user.uuid:
                 return _error("This reset link is invalid or has expired.", 401, "invalid_token")
+        elif _password_never_set(user):
+            # Signed up with Google or Microsoft: there is no current password to
+            # confirm. They are signed in, which is what this check stands in for.
+            pass
         else:
             current_password = data.get("current_password") or data.get("currentPassword")
             if not current_password or not user.is_password(current_password):
                 return _error("Your current password is incorrect.", 400, "invalid_credentials")
         user.set_password(new_password)
+        _mark_password_set(user)
         AuditLog.record(user.uuid, "password_changed", True, ip_address=_client_ip())
 
     new_email = (data.get("email") or "").strip().lower()
@@ -384,10 +435,16 @@ def recover():
         link = f"{base}{'&' if '?' in base else '?'}token={reset_token}&type=recovery"
         AuditLog.record(user.uuid, "password_reset_requested", True, ip_address=_client_ip())
 
-        current_app.logger.info("Password reset link for %s: %s", email, link)
-        if not current_app.config.get("DB_ENDPOINT"):
-            # Development convenience only — never returned once a real
-            # deployment (external database) is configured.
+        # Development convenience only: hand the link back so the flow can be
+        # tested without a mail provider. This used to be decided by whether an
+        # external database was configured — and a deployment on SQLite has
+        # none, so a live server returned a working reset link for any account
+        # to whoever asked: a full account takeover by email address. It now
+        # requires a non-production server AND a request from this machine.
+        is_local_request = (request.remote_addr or "") in ("127.0.0.1", "::1")
+        if not current_app.config.get("IS_PRODUCTION") and is_local_request \
+                and not current_app.config.get("DB_ENDPOINT"):
+            current_app.logger.info("Password reset link for %s: %s", email, link)
             response["reset_link"] = link
             response["token"] = reset_token
 

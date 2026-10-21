@@ -114,8 +114,6 @@ def _describe_trip(trip):
             f"Hotel: {hotel.get('name') or 'TBD'}"
             + (f" in {hotel.get('location')}" if hotel.get('location') else "")
         )
-    if trip.get("groundTransport"):
-        lines.append(f"Ground transport: {trip['groundTransport']}")
     if trip.get("approvalStatus"):
         lines.append(f"Approval status: {trip['approvalStatus']}")
     return "\n".join(lines)

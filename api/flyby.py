@@ -251,9 +251,13 @@ def preferences():
         if not isinstance(data, dict):
             return _fail("Expected a preferences object.")
 
+        # Preferred airlines and hotel brands are deliberately not written here.
+        # Settings edits them through /travel_preferences; this endpoint is the
+        # learning hook's, which saves its whole document on every booking — so
+        # if its first load ever failed, it would write its built-in defaults
+        # straight over the traveler's real choices. They're still returned
+        # below; they just have a single writer.
         mapping = {
-            "preferredAirlines": "_preferred_airlines",
-            "preferredHotelBrands": "_preferred_hotel_brands",
             "preferredSeatType": "_preferred_seat",
             "preferredClass": "_preferred_class",
             "avoidsLayovers": "_avoid_layovers",
