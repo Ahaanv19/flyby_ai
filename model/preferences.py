@@ -129,7 +129,7 @@ class ClientCompany(db.Model, RowMixin):
     def read_client(self):
         """Shape used by the client-company picker in the app."""
         return {
-            "id": self.id,
+            "id": self.client_id,
             "name": self._name,
             "industry": self._industry,
             "notes": self._notes,

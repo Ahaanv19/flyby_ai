@@ -91,7 +91,7 @@ class Trip(db.Model, RowMixin):
         data = dict(self._client_data or {})
         data.pop("groundTransport", None)  # left in trips saved before it was removed
         data.update({
-            "id": self.id,
+            "id": self.client_id,
             "destination": self._destination,
             "startDate": iso(self._start_date),
             "endDate": iso(self._end_date),

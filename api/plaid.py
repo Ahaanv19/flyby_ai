@@ -335,7 +335,7 @@ def _trip_windows(user_uuid):
         except ValueError:
             continue
         windows.append({
-            "id": data.get("id") or trip.id,
+            "id": data.get("id") or trip.client_id,
             "name": data.get("destination") or "Trip",
             "start": start.isoformat(),
             "end": end.isoformat(),

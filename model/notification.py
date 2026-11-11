@@ -39,7 +39,7 @@ class Notification(db.Model, RowMixin):
     def read_client(self):
         """Return the notification in the shape the bell menu uses."""
         return {
-            "id": self.id,
+            "id": self.client_id,
             "type": self._type,
             "title": self._title,
             "description": self._description or "",

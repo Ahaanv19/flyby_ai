@@ -56,7 +56,7 @@ class Chat(db.Model, RowMixin):
         """Return the conversation in the shape the chat UI uses."""
         data = dict(self._client_data or {})
         data.update({
-            "id": self.id,
+            "id": self.client_id,
             "messages": self._messages or [],
             "participants": self._participants or [],
         })

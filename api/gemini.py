@@ -39,8 +39,10 @@ def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature
     Call Gemini with a system prompt and a user turn; return parsed JSON or None.
 
     The model is asked for ``application/json`` and the response is stripped of
-    any code fences before parsing. One quick retry covers a transient overload,
-    then it falls back so the caller never waits long.
+    any code fences before parsing. Gemini answers 503 ("overloaded") in bursts,
+    and a back-to-back retry usually lands in the same burst, so a transient
+    error is retried twice with a short, growing pause (about 2s in all) before
+    falling back, so the caller never waits long.
     """
     key = gemini_key()
     if not key:
@@ -64,7 +66,8 @@ def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature
     }
 
     resp = None
-    for attempt in range(2):
+    pauses = (0.6, 1.5)  # before the 2nd and 3rd attempts
+    for attempt in range(len(pauses) + 1):
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
         except requests.RequestException as error:
@@ -72,10 +75,10 @@ def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature
             return None
         if resp.status_code == 200:
             break
-        if resp.status_code in (429, 500, 502, 503):
+        if resp.status_code in (429, 500, 502, 503, 504):
             logger.warning("Gemini transient %s (attempt %s)", resp.status_code, attempt + 1)
-            if attempt == 0:
-                time.sleep(0.4)
+            if attempt < len(pauses):
+                time.sleep(pauses[attempt])
             continue
         logger.warning("Gemini returned %s: %s", resp.status_code, resp.text[:300])
         return None

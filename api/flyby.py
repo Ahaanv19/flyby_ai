@@ -60,8 +60,9 @@ def _sync_collection(model, rows, user_id, id_prefix=""):
     Existing rows are updated in place (so created_at and any server-side
     columns survive), missing ones are deleted, and new ones are inserted.
     Everything is scoped to ``user_id``, and the whole sync is one transaction.
+    Rows are matched by the id the app gave them (see ``RowMixin.client_id``).
     """
-    existing = {row.id: row for row in model.query.filter_by(_user_id=user_id).all()}
+    existing = {row.client_id: row for row in model.query.filter_by(_user_id=user_id).all()}
     seen = set()
 
     for item in rows:
@@ -73,9 +74,10 @@ def _sync_collection(model, rows, user_id, id_prefix=""):
         row = existing.get(row_id)
         if row is None:
             row = model()
-            row.id = row_id
+            row.id = model.storage_id(row_id, user_id)
             row._user_id = user_id
             db.session.add(row)
+            existing[row_id] = row
         row.apply_client(item)
 
     for row_id, row in existing.items():
@@ -157,7 +159,7 @@ def client_companies():
         return _fail(error)
 
     try:
-        existing = {row.id: row for row in ClientCompany.query.filter_by(_user_id=user_id).all()}
+        existing = {row.client_id: row for row in ClientCompany.query.filter_by(_user_id=user_id).all()}
         seen = set()
         for item in rows:
             if not isinstance(item, dict):
@@ -166,8 +168,11 @@ def client_companies():
             seen.add(row_id)
             row = existing.get(row_id)
             if row is None:
-                row = ClientCompany(id=row_id, _user_id=user_id)
+                # Every account starts with the same sample companies ("co_acme",
+                # …), so the id may already belong to someone else.
+                row = ClientCompany(id=ClientCompany.storage_id(row_id, user_id), _user_id=user_id)
                 db.session.add(row)
+                existing[row_id] = row
             row._name = item.get("name") or row._name or ""
             row._industry = item.get("industry")
             row._notes = item.get("notes")

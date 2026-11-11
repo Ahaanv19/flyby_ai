@@ -69,7 +69,7 @@ class Expense(db.Model, RowMixin):
         """Return the expense in the shape the React app uses."""
         data = dict(self._client_data or {})
         data.update({
-            "id": self.id,
+            "id": self.client_id,
             "amount": self._amount or 0,
             "currency": self._currency or "USD",
             "category": self._category,

@@ -154,6 +154,35 @@ class RowMixin:
             db.session.rollback()
             return False
 
+    # -- ids the app chose -------------------------------------------------
+
+    # The app names its own rows ("trip_1730…", or a sample's fixed "co_acme"),
+    # and those names only have to be unique within one account — but every
+    # table keys rows by id alone. So when another account already holds a
+    # name, this account's row is stored as "<name>~<owner>" and still handed
+    # back to the app under the plain name.
+    OWNER_SEP = "~"
+
+    @property
+    def client_id(self):
+        """The id the app knows this row by."""
+        head, sep, tail = (self.id or "").rpartition(self.OWNER_SEP)
+        owner = getattr(self, "_user_id", None) or ""
+        if sep and head and len(tail) >= 8 and owner.startswith(tail):
+            return head
+        return self.id
+
+    @classmethod
+    def storage_id(cls, client_id, user_id):
+        """The primary key for a new row of ``user_id``'s that the app calls ``client_id``."""
+        candidates = (client_id,
+                      f"{client_id}{cls.OWNER_SEP}{user_id[:8]}",
+                      f"{client_id}{cls.OWNER_SEP}{user_id}")
+        for candidate in candidates:
+            if db.session.get(cls, candidate) is None:
+                return candidate
+        raise ValueError(f"id {client_id!r} is already in use")
+
     # -- construction -----------------------------------------------------
 
     @classmethod
