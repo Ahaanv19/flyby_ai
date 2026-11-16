@@ -60,6 +60,11 @@ _extra_origins = [
     o.strip() for o in os.environ.get('FRONTEND_ORIGINS', '').split(',') if o.strip()
 ]
 
+# Also the only places a link in an email may point (see api.notify): a reset
+# link built from a caller-supplied address would let anyone have Flyby email a
+# victim a real reset token wrapped in a link to somewhere else.
+app.config['FRONTEND_ORIGINS'] = _default_origins + _extra_origins
+
 cors = CORS(
     app,
     supports_credentials=True,
@@ -234,6 +239,39 @@ app.config['APP_URL'] = PUBLIC_APP_URL
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID') or None
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN') or None
 app.config['TWILIO_FROM_NUMBER'] = os.environ.get('TWILIO_FROM_NUMBER') or None
+
+# ---------------------------------------------------------------------------
+# Email — sign-in alerts, booking confirmations, password resets
+# ---------------------------------------------------------------------------
+# Sent over SMTP, which every mail provider speaks (Gmail, Outlook, SendGrid,
+# Resend, Mailgun, Amazon SES…), so there is no provider-specific code. Unset,
+# no email is sent and the app works exactly as it does without it — the admin
+# page says email isn't set up rather than pretending.
+#
+#   SMTP_HOST=smtp.gmail.com
+#   SMTP_PORT=587
+#   SMTP_USERNAME=you@gmail.com
+#   SMTP_PASSWORD=<app password>
+#   MAIL_FROM=you@gmail.com            (defaults to SMTP_USERNAME)
+#
+# SMTP_SECURITY is "starttls" (port 587, the default), "ssl" (port 465) or
+# "none" (a local test server only — it sends the password unencrypted).
+app.config['SMTP_HOST'] = (os.environ.get('SMTP_HOST') or '').strip() or None
+try:
+    app.config['SMTP_PORT'] = int(os.environ.get('SMTP_PORT') or 587)
+except ValueError:
+    app.config['SMTP_PORT'] = 587
+app.config['SMTP_USERNAME'] = (os.environ.get('SMTP_USERNAME') or '').strip() or None
+app.config['SMTP_PASSWORD'] = os.environ.get('SMTP_PASSWORD') or None
+app.config['SMTP_SECURITY'] = (
+    os.environ.get('SMTP_SECURITY')
+    or ('ssl' if app.config['SMTP_PORT'] == 465 else 'starttls')
+).strip().lower()
+app.config['MAIL_FROM'] = (
+    (os.environ.get('MAIL_FROM') or '').strip() or app.config['SMTP_USERNAME']
+)
+app.config['MAIL_FROM_NAME'] = (os.environ.get('MAIL_FROM_NAME') or 'Flyby AI').strip()
+app.config['MAIL_REPLY_TO'] = (os.environ.get('MAIL_REPLY_TO') or '').strip() or None
 
 # ---------------------------------------------------------------------------
 # Duffel — real flight search + booking

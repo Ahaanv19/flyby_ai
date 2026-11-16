@@ -133,6 +133,22 @@
   </div>
 
   {% if current_user.is_authenticated and current_user.is_admin() %}
+  <!-- Admins only: whether email can be sent, and what the mail server last said. -->
+  <div class="fly-panel" style="padding:1.1rem 1.3rem; margin:1.4rem 0;">
+    <h3 style="margin:0 0 .35rem; font-size:1rem;">Email (sign-in alerts, booking confirmations, password resets)</h3>
+    {% if not email_status.configured %}
+      <p style="margin:0; font-size:.9rem;"><span style="color:var(--fly-danger); font-weight:700;">Not set up</span> · no email is being sent</p>
+      <p style="margin:.35rem 0 0; color:var(--fly-muted); font-size:.85rem;">Add <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USERNAME</code>, <code>SMTP_PASSWORD</code> and <code>MAIL_FROM</code> to the backend <code>.env</code> and restart. Any mail provider works; with Gmail use <code>smtp.gmail.com</code>, port <code>587</code> and an app password.</p>
+    {% elif email_status.checked_at is none %}
+      <p style="margin:0; font-size:.9rem;"><span style="font-weight:700;">Set up</span> · sending as {{ email_status.sender }} through {{ email_status.host }} · nothing sent since the server started</p>
+    {% elif email_status.ok %}
+      <p style="margin:0; font-size:.9rem;"><span style="color:var(--fly-success); font-weight:700;">Working</span> · last email accepted {{ email_status.checked_at }} · {{ email_status.sent }} sent, {{ email_status.failed }} failed since the server started</p>
+    {% else %}
+      <p style="margin:0; font-size:.9rem;"><span style="color:var(--fly-danger); font-weight:700;">Failing</span> · {{ email_status.checked_at }} · {{ email_status.sent }} sent, {{ email_status.failed }} failed since the server started</p>
+      {% if email_status.message %}<p style="margin:.35rem 0 0; color:var(--fly-muted); font-size:.85rem;">{{ email_status.message }}</p>{% endif %}
+    {% endif %}
+  </div>
+
   <!-- Admins only: the real reason hotels aren't available, in Duffel's words. -->
   <div class="fly-panel" style="padding:1.1rem 1.3rem; margin:1.4rem 0;">
     <h3 style="margin:0 0 .35rem; font-size:1rem;">Hotel booking (Duffel Stays)</h3>

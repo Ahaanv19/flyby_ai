@@ -11,6 +11,8 @@ Endpoints:
     POST /functions/v1/twofa-verify-sms       check a verification code
     POST /functions/v1/twofa-disable          turn 2FA off
     GET  /functions/v1/search-travel          flight / hotel search
+    POST /functions/v1/parse-confirmation     pasted airline confirmation -> booking details
+    POST /functions/v1/assess-calendar        calendar events -> which ones need a trip
     POST /functions/v1/transcribe             voice note -> text
     POST /functions/v1/audit-login            record a sign-in from the client
 
@@ -25,11 +27,14 @@ import re
 from flask import Blueprint, current_app, g, jsonify, request
 
 from __init__ import db
+from api import notify
 from api.jwt_authorize import token_required
 from api.travel_search import search as run_travel_search
 from api.trip_reasoning import reason_about_trip
 from api.nl_search import parse_search as run_parse_search
 from api.chat_ai import detect_trip as run_detect_trip
+from api.confirmation_parser import MAX_CHARS as CONFIRMATION_MAX_CHARS, parse_confirmation as run_parse_confirmation
+from api.calendar_planner import assess_events as run_assess_events
 from model.base import new_uuid, utcnow
 from model.mfa import MfaCredential, PendingVerification
 from model.security import AuditLog, TwoFactorAuditLog, mask_phone
@@ -249,6 +254,7 @@ def twofa_verify_sms():
             return jsonify({"error": "Could not enable two-step verification."}), 500
 
         AuditLog.record(user.uuid, "2fa_enabled", True, ip_address=_client_ip())
+        notify.two_factor_changed(user, True)
 
     TwoFactorAuditLog.record(user.uuid, "verify_code", True, phone, None, _client_ip(), _agent())
     return jsonify({"success": True, "maskedPhone": mask_phone(phone)}), 200
@@ -276,6 +282,7 @@ def twofa_disable():
         return jsonify({"error": "Could not disable two-step verification."}), 500
 
     AuditLog.record(user.uuid, "2fa_disabled", True, ip_address=_client_ip())
+    notify.two_factor_changed(user, False)
     TwoFactorAuditLog.record(user.uuid, "disable", True, None, None, _client_ip(), _agent())
     return jsonify({"success": True}), 200
 
@@ -398,6 +405,46 @@ def trip_reasoning():
 
     reasoning, engine = reason_about_trip(trip, policy)
     return jsonify({"reasoning": reasoning, "engine": engine}), 200
+
+
+# ---------------------------------------------------------------------------
+# Calendar understanding
+# ---------------------------------------------------------------------------
+
+@functions_api.route('/assess-calendar', methods=['POST'])
+@token_required()
+def assess_calendar():
+    """
+    Decide which of the caller's calendar events need a trip.
+
+    The app sends the upcoming events it already holds (it reads the calendar
+    itself, with the traveler's own token) and where the traveler is based.
+    Returns ``{assessments: [...], engine: "gemini"}``, or ``{assessments: null,
+    engine: "fallback"}`` when Gemini couldn't be asked — the app then uses its
+    built-in location rule. Nothing is stored.
+    """
+    data = request.get_json(silent=True) or {}
+    assessments, engine = run_assess_events(data.get("events"), home=_clean(data.get("home"), 80))
+    return jsonify({"assessments": assessments, "engine": engine}), 200
+
+
+# ---------------------------------------------------------------------------
+# Bookings made on an airline's own site
+# ---------------------------------------------------------------------------
+
+@functions_api.route('/parse-confirmation', methods=['POST'])
+@token_required()
+def parse_confirmation():
+    """
+    Read a confirmation email the traveler pasted.
+
+    Returns ``{booking: {...}, engine}`` with only the fields found in the text
+    — an empty ``booking`` when nothing could be read, so the traveler types the
+    details instead. The text is read and discarded; it is not stored.
+    """
+    data = request.get_json(silent=True) or {}
+    booking, engine = run_parse_confirmation(_clean(data.get("text"), CONFIRMATION_MAX_CHARS))
+    return jsonify({"booking": booking, "engine": engine}), 200
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,8 @@ def gemini_available():
     return gemini_key() is not None
 
 
-def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature=0.5, timeout=15):
+def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature=0.5, timeout=15,
+                attempts=3):
     """
     Call Gemini with a system prompt and a user turn; return parsed JSON or None.
 
@@ -42,7 +43,8 @@ def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature
     any code fences before parsing. Gemini answers 503 ("overloaded") in bursts,
     and a back-to-back retry usually lands in the same burst, so a transient
     error is retried twice with a short, growing pause (about 2s in all) before
-    falling back, so the caller never waits long.
+    falling back, so the caller never waits long. ``attempts`` lowers that for a
+    caller with a traveler waiting on the answer.
     """
     key = gemini_key()
     if not key:
@@ -66,7 +68,7 @@ def call_gemini(system_prompt, user_text, *, max_output_tokens=2048, temperature
     }
 
     resp = None
-    pauses = (0.6, 1.5)  # before the 2nd and 3rd attempts
+    pauses = (0.6, 1.5)[:max(0, attempts - 1)]  # before the 2nd and 3rd attempts
     for attempt in range(len(pauses) + 1):
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=timeout)

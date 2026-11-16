@@ -18,6 +18,7 @@ from flask import Blueprint, g, jsonify, request
 from api.jwt_authorize import token_required
 from api.duffel import BookingError
 from api.duffel_stays import create_booking, create_quote, fetch_rates, search
+from api import notify
 from model.security import AuditLog
 
 stays_api = Blueprint('stays_api', __name__, url_prefix='/api/stays')
@@ -103,4 +104,5 @@ def book():
         g.user_id, "hotel_booked", True, ip_address=_client_ip(),
         booking_id=booking.get("id"), booking_reference=booking.get("reference"),
     )
+    notify.hotel_reserved(g.current_user, booking)
     return jsonify({"booking": booking}), 201

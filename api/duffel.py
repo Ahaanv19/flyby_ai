@@ -122,6 +122,40 @@ def _iso_duration_to_label(iso):
     return f"{days * 24 + hours}h {minutes:02d}m"
 
 
+def _iso_duration_to_minutes(iso):
+    """'PT5H30M' / 'P1DT2H10M' -> minutes, or None when it can't be read."""
+    label = _iso_duration_to_label(iso)
+    if not label:
+        return None
+    hours, minutes = label.replace("m", "").split("h ")
+    return int(hours) * 60 + int(minutes)
+
+
+def _layovers(segments):
+    """
+    Each connection on the way: where, and how long on the ground.
+
+    Both times are local to the connecting airport, so the difference is the
+    real wait. A 38-minute change and a five-hour one are very different trips
+    with the same number of stops.
+    """
+    from datetime import datetime
+    out = []
+    for arriving, departing in zip(segments, segments[1:]):
+        try:
+            landed = datetime.fromisoformat((arriving.get("arriving_at") or "")[:19])
+            leaves = datetime.fromisoformat((departing.get("departing_at") or "")[:19])
+        except ValueError:
+            continue
+        minutes = int((leaves - landed).total_seconds() // 60)
+        if minutes >= 0:
+            out.append({
+                "airport": (arriving.get("destination") or {}).get("iata_code") or "",
+                "minutes": minutes,
+            })
+    return out
+
+
 def _day_offset(depart_iso, arrive_iso):
     """
     How many calendar days after departure a flight lands (0, 1, 2…).
@@ -154,6 +188,8 @@ def _slice_summary(flight_slice, owner):
         "arrivingAt": last_seg.get("arriving_at"),
         "arriveDayOffset": _day_offset(first_seg.get("departing_at"), last_seg.get("arriving_at")),
         "duration": _iso_duration_to_label((flight_slice or {}).get("duration")),
+        "durationMinutes": _iso_duration_to_minutes((flight_slice or {}).get("duration")),
+        "layovers": _layovers(segments),
         "stops": stops,
         # Every connection point, in order — a two-stop itinerary names both.
         "stopCities": [
@@ -163,6 +199,57 @@ def _slice_summary(flight_slice, owner):
         ],
         "origin": (first_seg.get("origin") or {}).get("iata_code") or "",
         "destination": (last_seg.get("destination") or {}).get("iata_code") or "",
+    }
+
+
+def _fare_terms(offer):
+    """
+    What the fare allows, as the airline states it: changes, refunds and bags.
+
+    ``None`` means the airline didn't say — which is not the same as "no", and
+    is never reported as either.
+    """
+    conditions = offer.get("conditions") or {}
+
+    def rule(name):
+        entry = conditions.get(name) or {}
+        allowed = entry.get("allowed")
+        if not isinstance(allowed, bool):
+            return None, None
+        try:
+            fee = float(entry.get("penalty_amount")) if entry.get("penalty_amount") is not None else None
+        except (TypeError, ValueError):
+            fee = None
+        return allowed, fee
+
+    changeable, change_fee = rule("change_before_departure")
+    refundable, refund_fee = rule("refund_before_departure")
+
+    slices = offer.get("slices") or []
+    brand = (slices[0].get("fare_brand_name") if slices else None) or None
+    bags = {"checked": None, "carry_on": None}
+    try:
+        traveler = slices[0]["segments"][0]["passengers"][0]
+        for bag in traveler.get("baggages") or []:
+            if bag.get("type") in bags and isinstance(bag.get("quantity"), int):
+                bags[bag["type"]] = bag["quantity"]
+    except (IndexError, KeyError, TypeError):
+        pass
+
+    try:
+        emissions = float(offer.get("total_emissions_kg")) if offer.get("total_emissions_kg") is not None else None
+    except (TypeError, ValueError):
+        emissions = None
+
+    return {
+        "fareBrand": brand,
+        "changeable": changeable,
+        "changeFee": change_fee,
+        "refundable": refundable,
+        "refundFee": refund_fee,
+        "checkedBags": bags["checked"],
+        "carryOnBags": bags["carry_on"],
+        "emissionsKg": emissions,
     }
 
 
@@ -225,6 +312,8 @@ def normalize_offer(offer):
         "arrivingAt": out["arrivingAt"],
         "arriveDayOffset": out["arriveDayOffset"],
         "duration": out["duration"],
+        "durationMinutes": out["durationMinutes"],
+        "layovers": out["layovers"],
         "stops": out["stops"],
         "stopCity": out["stopCities"][0] if out["stopCities"] else None,
         "stopCities": out["stopCities"],
@@ -243,6 +332,7 @@ def normalize_offer(offer):
         # international routes). The booking form must collect them when set.
         "identityDocumentsRequired": bool(offer.get("passenger_identity_documents_required")),
         "source": "duffel",
+        **_fare_terms(offer),
     }
     if back:
         normalized.update({
@@ -253,6 +343,8 @@ def normalize_offer(offer):
             "returnArrivingAt": back["arrivingAt"],
             "returnArriveDayOffset": back["arriveDayOffset"],
             "returnDuration": back["duration"],
+            "returnDurationMinutes": back["durationMinutes"],
+            "returnLayovers": back["layovers"],
             "returnStops": back["stops"],
             "returnStopCities": back["stopCities"],
             "returnOrigin": back["origin"],
@@ -266,7 +358,8 @@ def normalize_offer(offer):
 # ---------------------------------------------------------------------------
 
 def search_offers(origin, destination, departure_date, return_date=None,
-                  passengers=1, cabin_class="economy", limit=30, airline=None):
+                  passengers=1, cabin_class="economy", limit=30, airline=None,
+                  everything=False):
     """
     Search real flight offers. Read-only — never charges.
 
@@ -277,6 +370,10 @@ def search_offers(origin, destination, departure_date, return_date=None,
     "EK"), the results are filtered to that carrier and returned cheapest-first —
     this powers a follow-up like "show me Emirates", which re-queries live
     inventory instead of just filtering whatever was already on screen.
+
+    ``everything=True`` returns every offer for the requested airports, cheapest
+    first, without cutting it down to ``limit`` — for the ranker
+    (``api.flight_ranker``), which chooses what to surface on more than price.
     """
     if not is_configured():
         return None
@@ -367,6 +464,9 @@ def search_offers(origin, destination, departure_date, return_date=None,
         if filtered:
             filtered[0].setdefault("tags", [])
         return filtered[:limit]
+
+    if everything:
+        return normalized
 
     # Return a DIVERSE set, not just the absolute cheapest `limit` offers.
     # On long-haul routes there can be dozens of cheap multi-stop fares that

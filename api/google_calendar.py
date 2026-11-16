@@ -188,6 +188,12 @@ def normalize_event(event):
         "title": event.get("summary") or "(no title)",
         "startDate": (start.get("dateTime") or start.get("date") or "")[:10],
         "endDate": (end.get("dateTime") or end.get("date") or "")[:10],
+        # The exact moments, with their UTC offset, so the app can tell a 9 AM
+        # meeting from a 4 PM one. An all-day event has dates only, and its end
+        # date is the day AFTER it finishes (Google's convention).
+        "start": start.get("dateTime") or start.get("date") or "",
+        "end": end.get("dateTime") or end.get("date") or "",
+        "allDay": bool(start.get("date") and not start.get("dateTime")),
         "location": event.get("location") or "",
         "description": event.get("description") or "",
         "attendees": [a.get("email") for a in (event.get("attendees") or []) if a.get("email")],

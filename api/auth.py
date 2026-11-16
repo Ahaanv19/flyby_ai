@@ -34,6 +34,7 @@ from model.base import new_uuid, utcnow
 from model.company import Company
 from model.preferences import TravelPreference
 from model.roles import UserRole
+from api import notify
 from model.security import ActiveSession, AuditLog
 from model.user import Profile, User
 
@@ -218,6 +219,7 @@ def signup():
     created.touch_login()
     AuditLog.record(created.uuid, "signup", True, ip_address=_client_ip(),
                     user_agent=request.headers.get("User-Agent", "")[:500])
+    notify.welcome(created)
 
     return jsonify(session), 200
 
@@ -264,6 +266,8 @@ def _password_grant():
     user.touch_login()
     AuditLog.record(user.uuid, "login_success", True, ip_address=_client_ip(),
                     user_agent=request.headers.get("User-Agent", "")[:500])
+    notify.signed_in(user, ip_address=_client_ip(), method="password",
+                     browser=_detect_browser(request.headers.get("User-Agent", "")))
 
     return jsonify(session), 200
 
@@ -288,6 +292,11 @@ def _oauth_code_grant():
     user.touch_login()
     AuditLog.record(user.uuid, "login_success", True, ip_address=_client_ip(), method="oauth",
                     user_agent=request.headers.get("User-Agent", "")[:500])
+    if is_new_account:
+        notify.welcome(user)
+    else:
+        notify.signed_in(user, ip_address=_client_ip(), method="oauth",
+                         browser=_detect_browser(request.headers.get("User-Agent", "")))
     # Lets the app send someone who just signed up through the same setup steps
     # an email sign-up gets.
     session["new_account"] = is_new_account
@@ -358,6 +367,7 @@ def update_user():
     """
     user = g.current_user
     data = request.get_json(silent=True) or {}
+    password_changed = False
 
     new_password = data.get("password")
     if new_password:
@@ -381,6 +391,7 @@ def update_user():
                 return _error("Your current password is incorrect.", 400, "invalid_credentials")
         user.set_password(new_password)
         _mark_password_set(user)
+        password_changed = True
         AuditLog.record(user.uuid, "password_changed", True, ip_address=_client_ip())
 
     new_email = (data.get("email") or "").strip().lower()
@@ -405,6 +416,10 @@ def update_user():
         db.session.rollback()
         return _error("Could not save your changes.", 500, "update_failed")
 
+    # Told only once the change has actually been saved.
+    if password_changed:
+        notify.password_changed(user, ip_address=_client_ip())
+
     return jsonify(user.read_auth_user()), 200
 
 
@@ -418,9 +433,10 @@ def recover():
     Start a password reset.
 
     Always returns success, whether or not the email has an account, so the
-    response cannot be used to enumerate users. In local development, where no
-    mail provider is configured, the reset link is logged to the console and
-    returned so the flow is testable end to end.
+    response cannot be used to enumerate users. The reset link is emailed when a
+    mail server is configured (``api.notify``). In local development the link
+    is also logged to the console and returned, so the flow is testable end to
+    end without one.
     """
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
@@ -431,9 +447,11 @@ def recover():
     user = User.by_email(email)
     if user:
         reset_token = encode_token(user, kind="recovery", ttl_seconds=60 * 30)
-        base = redirect_to or "http://localhost:8080/reset-password"
+        # Only ever a page on Flyby's own front end — see notify.reset_link_base.
+        base = notify.reset_link_base(redirect_to)
         link = f"{base}{'&' if '?' in base else '?'}token={reset_token}&type=recovery"
         AuditLog.record(user.uuid, "password_reset_requested", True, ip_address=_client_ip())
+        notify.password_reset(user, link, minutes=30)
 
         # Development convenience only: hand the link back so the flow can be
         # tested without a mail provider. This used to be decided by whether an

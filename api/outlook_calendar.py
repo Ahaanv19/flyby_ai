@@ -201,7 +201,7 @@ def list_events(access_token, time_min=None, max_results=50, window_days=180):
         "endDateTime": end,
         "$orderby": "start/dateTime",
         "$top": max_results,
-        "$select": "id,subject,start,end,location,bodyPreview,attendees,isCancelled",
+        "$select": "id,subject,start,end,location,bodyPreview,attendees,isCancelled,isAllDay",
     }
     response = _request("GET", f"{GRAPH}/me/calendarView", headers=headers, params=params)
 
@@ -297,11 +297,23 @@ def normalize_event(event):
     start = (event.get("start") or {}).get("dateTime") or ""
     end = (event.get("end") or {}).get("dateTime") or ""
     location = _location_text(event.get("location") or {})
+    all_day = bool(event.get("isAllDay"))
+
+    def instant(value):
+        # Requested in UTC (see list_events); say so, so the app converts it to
+        # local time instead of reading it as local. All-day events are dates.
+        if not value:
+            return ""
+        return value[:10] if all_day else f"{value[:19]}Z"
+
     return {
         "id": event.get("id"),
         "title": event.get("subject") or "(no title)",
         "startDate": start[:10],
         "endDate": end[:10],
+        "start": instant(start),
+        "end": instant(end),
+        "allDay": all_day,
         "location": location,
         "description": event.get("bodyPreview") or "",
         "attendees": [

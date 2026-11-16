@@ -20,9 +20,10 @@ nothing is lost in translation, while the columns underneath stay populated for
 the reports and admin console.
 """
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 from __init__ import db
+from api import notify
 from api.jwt_authorize import token_required
 from model.base import new_uuid, utcnow
 from model.chat import Chat
@@ -116,11 +117,53 @@ def _collection_endpoint(model, key, id_prefix=""):
 # Collections
 # ---------------------------------------------------------------------------
 
+def _trip_snapshot(user_id):
+    """Each of the caller's trips by the app's id: status, and whether it existed."""
+    return {row.client_id: row._status for row in Trip.query.filter_by(_user_id=user_id).all()}
+
+
+def _announce_trip_changes(user, before):
+    """
+    Email about what a save changed: a flight booked elsewhere that was just
+    added, or a trip that was just cancelled.
+
+    Decided from what the save actually changed on the server, not from the
+    app saying so. A trip only counts as "just added" if it was confirmed in the
+    last few minutes — an old browser re-uploading trips it already had must not
+    announce them again.
+    """
+    try:
+        from datetime import datetime, timedelta
+        recent = (datetime.utcnow() - timedelta(minutes=15)).isoformat()
+        for row in Trip.query.filter_by(_user_id=user.uuid).all():
+            trip = row.read_client()
+            was = before.get(row.client_id)
+            if was is None:
+                # When the app recorded the booking (UTC), not when the row
+                # was inserted — a re-upload inserts a new row for an old trip.
+                confirmed = str(trip.get("confirmedAt") or "")[:19]
+                flight = trip.get("flight") or {}
+                if (row._status == "confirmed" and flight.get("bookedVia")
+                        and flight.get("bookingReference") and confirmed >= recent[:19]):
+                    notify.trip_added(user, trip)
+            elif was != "cancelled" and row._status == "cancelled":
+                notify.trip_cancelled(user, trip)
+    except Exception as error:  # noqa: BLE001 — an email must never fail a save
+        current_app.logger.warning("Trip change emails skipped: %s", error)
+
+
 @flyby_api.route('/trips', methods=['GET', 'PUT'])
 @token_required()
 def trips():
     """Load or save the caller's trips."""
-    return _collection_endpoint(Trip, "trips", "trip_")()
+    if request.method != 'PUT':
+        return _collection_endpoint(Trip, "trips", "trip_")()
+    before = _trip_snapshot(g.user_id)
+    response = _collection_endpoint(Trip, "trips", "trip_")()
+    status = response[1] if isinstance(response, tuple) else getattr(response, "status_code", 200)
+    if status == 200:
+        _announce_trip_changes(g.current_user, before)
+    return response
 
 
 @flyby_api.route('/expenses', methods=['GET', 'PUT'])

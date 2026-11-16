@@ -72,9 +72,10 @@ from model.identity import UserIdentity
 from model.plaid import PlaidItem, PlaidTransaction
 from api.google_api import google_api
 from api.outlook_api import outlook_api
+from api.email_api import email_api
 
 # database Initialization functions
-from model.user import User, Profile, initUsers
+from model.user import User, Profile, ensureProfileColumns, initUsers
 from model.company import Company, TravelPolicy, initCompanies
 from model.trip import (CalendarSuggestion, Document, Itinerary, TravelAlert,
                         Trip, initTrips)
@@ -100,6 +101,7 @@ app.register_blueprint(stays_api)       # /api/stays/*   (real hotel search + bo
 app.register_blueprint(oauth_login_api) # /auth/v1/authorize, identities (Google/Microsoft sign-in)
 app.register_blueprint(google_api)      # /api/google/*  (Google Calendar sync)
 app.register_blueprint(outlook_api)     # /api/outlook/* (Outlook / Microsoft 365 sync)
+app.register_blueprint(email_api)       # /api/email/*   (email status + test message)
 
 
 # Tell Flask-Login the view function name of your login route
@@ -272,7 +274,11 @@ def page_not_found(e):
 def index():
     """The console landing page: live service status and system totals."""
     from api.duffel_stays import LAST_STATUS
-    return render_template("index.html", stats=_system_stats(), stays_status=dict(LAST_STATUS))
+    from api import mailer
+    email_status = dict(mailer.LAST_STATUS, configured=mailer.is_configured(),
+                        sender=app.config.get("MAIL_FROM"), host=app.config.get("SMTP_HOST"))
+    return render_template("index.html", stats=_system_stats(), stays_status=dict(LAST_STATUS),
+                           email_status=email_status)
 
 
 def _system_stats():
@@ -611,6 +617,10 @@ with app.app_context():
         ensurePreferenceColumns()
     except Exception as e:
         print(f"Preference column init: {e}")
+    try:
+        ensureProfileColumns()
+    except Exception as e:
+        print(f"Profile column init: {e}")
     try:
         initUsers()
         initCompanies()

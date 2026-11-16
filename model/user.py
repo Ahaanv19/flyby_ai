@@ -432,6 +432,9 @@ class Profile(db.Model, RowMixin):
     _notify_flight_disruptions = db.Column(db.Boolean, default=True, nullable=False)
     _notify_weekly_summary = db.Column(db.Boolean, default=False, nullable=False)
     _auto_match_expenses = db.Column(db.Boolean, default=True, nullable=False)
+    # Email me when my account is signed in to. Security notices that matter
+    # more than that (a changed password, a reset) are always sent.
+    _notify_sign_in = db.Column(db.Boolean, default=True, nullable=False)
 
     # Two-factor state (Settings → Security)
     _two_factor_enabled = db.Column(db.Boolean, default=False, nullable=False)
@@ -460,6 +463,7 @@ class Profile(db.Model, RowMixin):
         "notify_flight_disruptions": "_notify_flight_disruptions",
         "notify_weekly_summary": "_notify_weekly_summary",
         "auto_match_expenses": "_auto_match_expenses",
+        "notify_sign_in": "_notify_sign_in",
         "two_factor_enabled": "_two_factor_enabled",
         "two_factor_phone": "_two_factor_phone",
         "two_factor_verified_at": "_two_factor_verified_at",
@@ -564,6 +568,7 @@ class Profile(db.Model, RowMixin):
             "notify_flight_disruptions": self._notify_flight_disruptions,
             "notify_weekly_summary": self._notify_weekly_summary,
             "auto_match_expenses": self._auto_match_expenses,
+            "notify_sign_in": self._notify_sign_in,
             "two_factor_enabled": self._two_factor_enabled,
             "two_factor_phone": self._two_factor_phone,
             "two_factor_verified_at": iso(self._two_factor_verified_at),
@@ -587,6 +592,32 @@ class Profile(db.Model, RowMixin):
         except IntegrityError:
             db.session.rollback()
         return None
+
+
+def ensureProfileColumns():
+    """
+    Add profile columns introduced after a database was first created.
+
+    Same reason as ``model.preferences.ensurePreferenceColumns``: create_all()
+    never alters an existing table, and a profiles table without a column the
+    model names fails every sign-in with "no such column". Adds what's missing
+    and touches nothing else — safe on every startup, SQLite or MySQL.
+    """
+    from sqlalchemy import inspect, text
+
+    added = {
+        "_notify_sign_in": "BOOLEAN NOT NULL DEFAULT 1",
+    }
+    with app.app_context():
+        inspector = inspect(db.engine)
+        if "profiles" not in inspector.get_table_names():
+            return  # create_all will build it with every column
+        existing = {column["name"] for column in inspector.get_columns("profiles")}
+        for name, sql_type in added.items():
+            if name not in existing:
+                with db.engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE profiles ADD COLUMN {name} {sql_type}"))
+                print(f"Added column profiles.{name}")
 
 
 def initUsers():
