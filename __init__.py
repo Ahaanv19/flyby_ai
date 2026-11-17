@@ -272,6 +272,9 @@ app.config['MAIL_FROM'] = (
 )
 app.config['MAIL_FROM_NAME'] = (os.environ.get('MAIL_FROM_NAME') or 'Flyby AI').strip()
 app.config['MAIL_REPLY_TO'] = (os.environ.get('MAIL_REPLY_TO') or '').strip() or None
+# Where to email when someone asks for a company portal, so it gets verified.
+# Unset, requests still appear on the console's Companies page.
+app.config['PORTAL_REVIEW_EMAIL'] = (os.environ.get('PORTAL_REVIEW_EMAIL') or '').strip() or None
 
 # ---------------------------------------------------------------------------
 # Duffel — real flight search + booking

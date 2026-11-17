@@ -73,10 +73,11 @@ from model.plaid import PlaidItem, PlaidTransaction
 from api.google_api import google_api
 from api.outlook_api import outlook_api
 from api.email_api import email_api
+from api.company_api import company_api, review_portal
 
 # database Initialization functions
 from model.user import User, Profile, ensureProfileColumns, initUsers
-from model.company import Company, TravelPolicy, initCompanies
+from model.company import Company, TravelPolicy, ensureCompanyColumns, format_join_code, initCompanies
 from model.trip import (CalendarSuggestion, Document, Itinerary, TravelAlert,
                         Trip, initTrips)
 from model.expense import Expense, initExpenses
@@ -102,6 +103,7 @@ app.register_blueprint(oauth_login_api) # /auth/v1/authorize, identities (Google
 app.register_blueprint(google_api)      # /api/google/*  (Google Calendar sync)
 app.register_blueprint(outlook_api)     # /api/outlook/* (Outlook / Microsoft 365 sync)
 app.register_blueprint(email_api)       # /api/email/*   (email status + test message)
+app.register_blueprint(company_api)     # /api/company/* (company portals: join, request, manage)
 
 
 # Tell Flask-Login the view function name of your login route
@@ -123,10 +125,17 @@ def load_user(user_id):
 def inject_user():
     # app_url: where "Open the app" links go — the deployed app in production,
     # not a hardcoded localhost address.
+    pending_portals = 0
+    if getattr(current_user, "is_authenticated", False) and current_user.is_admin():
+        try:
+            pending_portals = Company.query.filter_by(_status="pending").count()
+        except Exception:  # noqa: BLE001 — a count must never break a page
+            pending_portals = 0
     return dict(
         current_user=current_user,
         app_url=(current_app.config.get('APP_URL') or 'http://localhost:8080').rstrip('/'),
         signin_providers=available_providers(),
+        pending_portals=pending_portals,
     )
 
 
@@ -146,6 +155,13 @@ def login():
     The same accounts work here and in the React app — one users table, one
     password — so an admin signs in with their normal Flyby email.
     """
+    # In development, sign in on the address Google and Microsoft return to
+    # (localhost, not 127.0.0.1). Browsers keep their cookies separately, so a
+    # sign-in started on the other one could never finish.
+    canonical = urlparse(app.config.get('PUBLIC_BACKEND_URL') or '').netloc
+    if (request.method == 'GET' and canonical and request.host != canonical
+            and not app.config.get('IS_PRODUCTION')):
+        return redirect(app.config['PUBLIC_BACKEND_URL'] + request.full_path.rstrip('?'))
     # A failed Google/Microsoft sign-in comes back here with its reason.
     error = request.args.get('oauth_error') or None
     next_page = request.args.get('next', '') or request.form.get('next', '')
@@ -164,6 +180,70 @@ def login():
             audit("login_failure", username=username)
             error = 'Invalid email or password.'
     return render_template("login.html", error=error, next=next_page)
+
+
+# ---------------------------------------------------------------------------
+# One sign-in for the app and the console
+# ---------------------------------------------------------------------------
+# Someone already signed in to the app opens the console without typing their
+# password again: the app asks for a one-time link with its normal access token,
+# and the link signs that same account in here. Links last 60 seconds and work
+# once.
+
+_CONSOLE_HANDOFF_SALT = "console-handoff"
+_used_console_handoffs = {}
+
+
+def _console_serializer():
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(app.config["SECRET_KEY"])
+
+
+@app.route('/api/console/handoff', methods=['POST'])
+@limiter.limit("20 per minute")
+def console_handoff():
+    """Give the signed-in app user a one-time link that signs them in to the console."""
+    import secrets as _secrets
+    from api.jwt_authorize import current_user_from_request
+    user = current_user_from_request()
+    if user is None:
+        return jsonify({"message": "Sign in to the app first.", "error": "unauthorized"}), 401
+    target = (request.get_json(silent=True) or {}).get("next") or ""
+    if not (target.startswith("/") and not target.startswith("//")):
+        target = ""
+    code = _console_serializer().dumps(
+        {"u": user.uuid, "j": _secrets.token_urlsafe(12), "n": target}, salt=_CONSOLE_HANDOFF_SALT)
+    # The configured public address, not the request's: behind a proxy the
+    # request can look like plain http or like the app's own host.
+    base = app.config.get('PUBLIC_BACKEND_URL') or request.host_url.rstrip('/')
+    return jsonify({"url": base + url_for('console_enter', code=code)})
+
+
+@app.route('/console/enter')
+def console_enter():
+    """Finish the app-to-console handoff: sign the account in and open the console."""
+    import time as _time
+    from itsdangerous import BadSignature, SignatureExpired
+    try:
+        payload = _console_serializer().loads(request.args.get('code', ''), salt=_CONSOLE_HANDOFF_SALT, max_age=60)
+    except SignatureExpired:
+        return redirect(url_for('login', oauth_error="That link expired. Open the console from the app again, or sign in below."))
+    except BadSignature:
+        return redirect(url_for('login', oauth_error="That sign-in link isn't valid. Sign in below."))
+    now = _time.time()
+    for jti, used_at in list(_used_console_handoffs.items()):
+        if now - used_at > 120:
+            _used_console_handoffs.pop(jti, None)
+    if payload.get("j") in _used_console_handoffs:
+        return redirect(url_for('login', oauth_error="That link was already used. Sign in below."))
+    _used_console_handoffs[payload.get("j")] = now
+    user = User.by_uuid(payload.get("u"))
+    if user is None:
+        return redirect(url_for('login', oauth_error="That account no longer exists."))
+    login_user(user)
+    user.touch_login()
+    AuditLog.record(user.uuid, "console_login", True, method="app_handoff")
+    return redirect(payload.get("n") or url_for('index'))
 
 
 @app.route('/account', methods=['GET', 'POST'])
@@ -354,6 +434,86 @@ def u2table():
 
 
 # Helper function to extract uploads for a user
+@app.route('/companies')
+@login_required
+@admin_required
+@ip_allowlist()
+def companies_console():
+    """
+    Verify company portals.
+
+    A portal lets its admins see their members' trips and expenses, so nobody
+    can create one on their own: it is asked for in the app and decided here.
+    Pending requests come first.
+    """
+    order = {"pending": 0, "active": 1, "suspended": 2, "rejected": 3}
+    rows = []
+    for company in Company.query.order_by(Company._created_at.desc()).all():
+        # Workspaces made automatically from email domains before portals
+        # existed have no requester and no code; they aren't portals.
+        if not company._created_by and not company._join_code:
+            continue
+        members = Profile.query.filter_by(_company_id=company.id).filter(
+            Profile._company_role.in_(("admin", "member"))).all()
+        requester = User.by_uuid(company._created_by) if company._created_by else None
+        reviewer = User.by_uuid(company._reviewed_by) if company._reviewed_by else None
+        same_name = Company.query.filter(
+            Company.id != company.id, Company._status == "active",
+            db.func.lower(Company._name) == (company._name or "").lower()).first()
+        settings = company._settings or {}
+        email_domain = ((requester.email if requester else "") or "").split("@")[-1].lower()
+        rows.append({
+            "company": company,
+            "code": format_join_code(company._join_code) if company._join_code else None,
+            "requester": requester,
+            "requester_title": settings.get("requesterTitle"),
+            "website": settings.get("website") or company._domain,
+            "team_size": settings.get("teamSize"),
+            "note": settings.get("note"),
+            # The quickest real check: does the requester's email match the
+            # company's website? A Gmail address asking for "acme.com" is
+            # worth a second look.
+            "email_matches": bool(email_domain and company._domain and
+                                  (email_domain == company._domain or email_domain.endswith("." + company._domain))),
+            "email_domain": email_domain,
+            "admins": [m for m in members if m._company_role == "admin"],
+            "member_count": len(members),
+            "reviewer": reviewer,
+            "duplicate_of": same_name,
+        })
+    rows.sort(key=lambda r: (order.get(r["company"]._status, 9), -(r["company"]._created_at.timestamp() if r["company"]._created_at else 0)))
+    return render_template("companies.html", rows=rows, stats=_system_stats())
+
+
+@app.route('/companies/<company_id>/<decision>', methods=['POST'])
+@login_required
+@admin_required
+@ip_allowlist()
+def companies_decide(company_id, decision):
+    """Verify, reject, suspend or reactivate a portal."""
+    if decision not in ("verify", "reject", "suspend", "reactivate"):
+        return jsonify({'error': 'Unknown action.'}), 404
+    # Only from the console page itself: a JSON body can't be sent cross-site
+    # without a CORS preflight, which this route doesn't grant.
+    if not request.is_json:
+        return jsonify({'error': 'Expected JSON.'}), 400
+    company = Company.query.get(company_id)
+    if not company or (not company._created_by and not company._join_code):
+        return jsonify({'error': 'No such company portal.'}), 404
+    note = ((request.get_json(silent=True) or {}).get('note') or '').strip()
+    problem = review_portal(company, decision, current_user.uuid, note)
+    if problem:
+        return jsonify({'error': problem}), 409
+    audit(f"company_portal_{decision}", company_id=company.id)
+    messages = {
+        "verify": f"{company._name} verified — join code {format_join_code(company._join_code)}",
+        "reject": f"{company._name} rejected",
+        "suspend": f"{company._name} suspended",
+        "reactivate": f"{company._name} reactivated",
+    }
+    return jsonify({'message': messages[decision]}), 200
+
+
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
     return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
@@ -601,6 +761,20 @@ def restore_data_command():
     restore_data(data)
 
 
+@custom_cli.command('make_admins')
+def make_admins():
+    """Make every existing account a Flyby Admin (console and app). New sign-ups stay regular users."""
+    from model.roles import UserRole
+    with app.app_context():
+        for user in User.query.all():
+            before = user.role
+            if before != "Admin":
+                user.role = "Admin"
+                db.session.commit()
+            UserRole.sync_from_user(user)
+            print(f"{user.email}: {before} -> Admin")
+
+
 # Register the custom command group with the Flask application
 app.cli.add_command(custom_cli)
 
@@ -621,6 +795,10 @@ with app.app_context():
         ensureProfileColumns()
     except Exception as e:
         print(f"Profile column init: {e}")
+    try:
+        ensureCompanyColumns()
+    except Exception as e:
+        print(f"Company column init: {e}")
     try:
         initUsers()
         initCompanies()

@@ -65,7 +65,7 @@
     <div class="fly-login-brand">
       <img src="{{ url_for('static', filename='assets/flyby-logo.png') }}" alt="Flyby AI">
       <h1>Operations console</h1>
-      <p class="sub">Sign in with your Flyby AI account.</p>
+      <p class="sub">The same account you use in the Flyby app: same email and password, or the same Google or Microsoft sign-in.</p>
     </div>
 
     {% if error %}
@@ -99,7 +99,8 @@
     {% endif %}
 
     <div class="fly-foot">
-      Looking for the app? <a href="{{ app_url }}">Open Flyby AI</a>
+      Already signed in to the app? Choose <strong>Flyby console</strong> in your profile menu there to skip this page.
+      <br><a href="{{ app_url }}">Open Flyby AI</a>
     </div>
 
   </div>

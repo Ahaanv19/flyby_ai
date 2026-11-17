@@ -329,3 +329,58 @@ def trip_cancelled(name, trip, app_url=None):
         blocks += _button("View your trips", f"{app_url}/trips")
     return subject, "\n".join(text_lines), _page("Trip cancelled", blocks,
                                                  footer="Trip emails can be turned off in Settings → Notifications.")
+
+
+# ---------------------------------------------------------------------------
+# Company portals
+# ---------------------------------------------------------------------------
+
+def portal_requested(company_name, domain, requester_name, requester_email, console_url):
+    """To whoever reviews portals at Flyby: a new request is waiting."""
+    subject = f"Company portal to verify: {company_name}"
+    intro = f"{requester_name} ({requester_email}) asked for a company portal."
+    facts = [("Company", company_name), ("Website", domain), ("Requested by", f"{requester_name} · {requester_email}")]
+    text = "\n".join([intro, "", *[f"{k}: {v}" for k, v in facts if v], "", f"Review it: {console_url}"])
+    html = _page("A company portal is waiting for review", _paragraph(intro) + _rows(facts)
+                 + _button("Review in the console", console_url),
+                 footer="Sent to the address set as PORTAL_REVIEW_EMAIL on the Flyby server.")
+    return subject, text, html
+
+
+def portal_verified(name, company_name, join_code, app_url=None):
+    subject = f"{company_name} is live on {BRAND}"
+    intro = f"Hi {_first_name(name)}, {company_name}'s company portal is verified, and you're its admin."
+    how = ("Share the join code with your team. Anyone who joins with it becomes a member, and as an admin "
+           "you can see their trips and expenses.")
+    keep = "Treat the code like a password: anyone with it can join. You can replace it at any time."
+    facts = [("Company", company_name), ("Join code", join_code)]
+    text_lines = [intro, "", *[f"{k}: {v}" for k, v in facts], "", how, keep]
+    blocks = _paragraph(intro) + _rows(facts) + _paragraph(how) + _paragraph(keep, muted=True)
+    if app_url:
+        text_lines += ["", f"Open your company dashboard: {app_url}/company"]
+        blocks += _button("Open your company dashboard", f"{app_url}/company")
+    return subject, "\n".join(text_lines), _page(f"{company_name} is verified", blocks,
+                                                 footer="Company portal emails are always sent.")
+
+
+def portal_rejected(name, company_name, note):
+    subject = f"Your {BRAND} company portal request"
+    intro = f"Hi {_first_name(name)}, Flyby couldn't verify the company portal you asked for, {company_name}."
+    reason = f"Reason: {note}" if note else ""
+    again = "You can send a new request from Settings with the details corrected."
+    text = "\n".join([intro, "", reason, "", again]).replace("\n\n\n", "\n\n")
+    html = _page("We couldn't verify your company", _paragraph(intro) + (_paragraph(reason) if reason else "")
+                 + _paragraph(again, muted=True), footer="Company portal emails are always sent.")
+    return subject, text, html
+
+
+def member_joined(admin_name, company_name, member_name, member_email, app_url=None):
+    subject = f"{member_name} joined {company_name} on {BRAND}"
+    intro = f"Hi {_first_name(admin_name)}, {member_name} ({member_email}) joined {company_name} with your join code."
+    note = ("If you don't know them, remove them from your company dashboard and replace the join code "
+            "so the old one stops working.")
+    text_lines = [intro, "", note] + ([f"", f"Company dashboard: {app_url}/company"] if app_url else [])
+    blocks = _paragraph(intro) + _paragraph(note, muted=True) + (
+        _button("Open company dashboard", f"{app_url}/company") if app_url else "")
+    return subject, "\n".join(text_lines), _page("Someone joined your company", blocks,
+                                                 footer="Sent to every admin of the company.")

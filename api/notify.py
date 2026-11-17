@@ -184,3 +184,47 @@ def trip_cancelled(user, trip):
     if not _setting(user, "_notify_trip_updates"):
         return False
     return _send(user, "trip_cancelled", templates.trip_cancelled(user.name, trip or {}, _app_url()))
+
+
+# ---------------------------------------------------------------------------
+# Company portals
+# ---------------------------------------------------------------------------
+
+@_guard
+def portal_requested(user, company):
+    """
+    Tell Flyby's reviewers a portal is waiting. Only when ``PORTAL_REVIEW_EMAIL``
+    is set — otherwise the console's Companies page is where requests show up.
+    """
+    reviewer = (current_app.config.get("PORTAL_REVIEW_EMAIL") or "").strip()
+    if not reviewer:
+        return False
+    console = (current_app.config.get("PUBLIC_BACKEND_URL") or "").rstrip("/") + "/companies"
+    subject, text, html = templates.portal_requested(company._name, company._domain, user.name, user.email, console)
+    return mailer.send(reviewer, subject, text, html, kind="portal_requested", user_id=user.uuid)
+
+
+@_guard
+def portal_decided(user, company, decision):
+    """The person who asked is told whether their portal was verified. Always sent."""
+    from model.company import format_join_code
+    if decision == "verify":
+        built = templates.portal_verified(user.name, company._name, format_join_code(company._join_code), _app_url())
+    else:
+        built = templates.portal_rejected(user.name, company._name, company._review_note)
+    return _send(user, f"portal_{decision}", built)
+
+
+@_guard
+def member_joined(company, member):
+    """Every admin of the company is told when someone joins it."""
+    from model.user import Profile, User
+    admins = Profile.query.filter_by(_company_id=company.id, _company_role="admin").all()
+    sent = False
+    for admin_profile in admins:
+        admin = User.by_uuid(admin_profile.user_id)
+        if not admin or admin.uuid == member.uuid:
+            continue
+        sent = _send(admin, "member_joined", templates.member_joined(
+            admin.name, company._name, member.name, member.email, _app_url())) or sent
+    return sent

@@ -424,6 +424,11 @@ class Profile(db.Model, RowMixin):
     _phone = db.Column(db.String(50), nullable=True)
     _timezone = db.Column(db.String(64), nullable=True)
     _company_id = db.Column(db.String(36), nullable=True)
+    # Company portal membership. "admin" is a company manager (sees members'
+    # trips and expenses); "member" is everyone else. Nothing to do with the
+    # platform-wide ``User.role`` that guards Flyby's own console.
+    _company_role = db.Column(db.String(20), nullable=True)
+    _company_joined_at = db.Column(db.DateTime, nullable=True)
     _theme_preference = db.Column(db.String(20), nullable=True)
 
     # Notification preferences (Settings → Notifications)
@@ -457,6 +462,8 @@ class Profile(db.Model, RowMixin):
         "phone": "_phone",
         "timezone": "_timezone",
         "company_id": "_company_id",
+        "company_role": "_company_role",
+        "company_joined_at": "_company_joined_at",
         "theme_preference": "_theme_preference",
         "notify_trip_updates": "_notify_trip_updates",
         "notify_expense_approvals": "_notify_expense_approvals",
@@ -471,7 +478,12 @@ class Profile(db.Model, RowMixin):
         "updated_at": "_updated_at",
     }
 
+    # Membership is read-only here: it decides whose trips and expenses a
+    # company admin can see, so it changes only through the portal endpoints
+    # (join with a code, be approved, be removed) — never by a client writing
+    # ``company_id`` or ``company_role`` onto its own profile.
     READ_ONLY = ("id", "user_id", "email", "created_at",
+                 "company_id", "company_role", "company_joined_at",
                  "two_factor_enabled", "two_factor_phone", "two_factor_verified_at")
 
     def __init__(self, user_id=None, email=None, full_name=None):
@@ -562,6 +574,8 @@ class Profile(db.Model, RowMixin):
             "phone": self._phone,
             "timezone": self._timezone,
             "company_id": self._company_id,
+            "company_role": self._company_role,
+            "company_joined_at": iso(self._company_joined_at),
             "theme_preference": self._theme_preference,
             "notify_trip_updates": self._notify_trip_updates,
             "notify_expense_approvals": self._notify_expense_approvals,
@@ -607,6 +621,8 @@ def ensureProfileColumns():
 
     added = {
         "_notify_sign_in": "BOOLEAN NOT NULL DEFAULT 1",
+        "_company_role": "VARCHAR(20)",
+        "_company_joined_at": "DATETIME",
     }
     with app.app_context():
         inspector = inspect(db.engine)

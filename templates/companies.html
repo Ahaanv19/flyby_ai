@@ -1,0 +1,218 @@
+{% extends "layouts/base.html" %}
+{% set project = "Companies" %}
+
+{#
+  Company portal review (Flyby admins only).
+
+  A portal lets its admins see their members' trips and expenses, so it only
+  exists once someone here verifies it. Pending requests come first, with the
+  checks worth making before saying yes.
+#}
+
+{% block style %}
+<style>
+  .fly-head { display: flex; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.6rem; }
+  .fly-head h1 { font-size: 1.8rem; font-weight: 800; letter-spacing: -.02em; margin: 0 0 .25rem; }
+  .fly-head p { color: var(--fly-muted); margin: 0; font-size: .93rem; max-width: 62ch; }
+
+  .fly-section-title {
+    font-size: .76rem; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--fly-muted); margin: 1.8rem 0 .7rem;
+  }
+  .fly-portal { padding: 1.1rem 1.25rem; margin-bottom: .8rem; }
+  .fly-portal-top { display: flex; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+  .fly-portal-name { font-size: 1.08rem; font-weight: 800; margin: 0; }
+  .fly-portal-sub { color: var(--fly-muted); font-size: .86rem; margin-top: .15rem; }
+  .fly-portal-sub a { color: var(--fly-cta); }
+  .fly-portal-actions { margin-left: auto; display: flex; gap: .4rem; flex-wrap: wrap; }
+
+  .fly-facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: .65rem 1.4rem; margin-top: .9rem; font-size: .87rem;
+  }
+  .fly-facts dt { color: var(--fly-muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; }
+  .fly-facts dd { margin: .1rem 0 0; font-weight: 600; overflow-wrap: anywhere; }
+
+  .fly-check { margin-top: .8rem; font-size: .85rem; display: flex; gap: .45rem; align-items: baseline; }
+  .fly-check.ok { color: #86efac; }
+  .fly-check.warn { color: #fcd34d; }
+  .fly-note { margin-top: .7rem; padding: .65rem .8rem; border-radius: 10px; font-size: .87rem;
+              background: rgba(255, 255, 255, .04); border: 1px solid var(--fly-border); }
+  .fly-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+
+  .fly-act {
+    padding: .45rem .85rem; border-radius: 9px; cursor: pointer;
+    font-family: inherit; font-size: .82rem; font-weight: 700;
+    color: var(--fly-text); background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--fly-border); white-space: nowrap;
+  }
+  .fly-act:hover { background: rgba(255, 255, 255, .1); border-color: var(--fly-border-strong); }
+  .fly-act.primary { background: var(--fly-cta); border-color: var(--fly-cta); color: #fff; }
+  .fly-act.primary:hover { filter: brightness(1.08); }
+  .fly-act.danger { color: #fecaca; border-color: rgba(248, 113, 113, .3); }
+  .fly-act.danger:hover { background: rgba(248, 113, 113, .14); }
+  .fly-act:disabled { opacity: .4; cursor: not-allowed; }
+  .fly-act:focus-visible { outline: 2px solid var(--fly-cta); outline-offset: 2px; }
+
+  .fly-empty { padding: 1.4rem 1.25rem; color: var(--fly-muted); font-size: .9rem; }
+
+  #fly-toast {
+    position: fixed; bottom: 1.4rem; left: 50%; transform: translateX(-50%) translateY(1.5rem);
+    padding: .8rem 1.2rem; border-radius: 12px; max-width: min(92vw, 560px);
+    font-size: .89rem; font-weight: 700; color: var(--fly-text);
+    background: rgba(17, 26, 46, .96); border: 1px solid var(--fly-border-strong);
+    box-shadow: 0 20px 44px -20px rgba(0, 0, 0, .9);
+    opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100;
+  }
+  #fly-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #fly-toast.err { border-color: rgba(248, 113, 113, .5); color: #fecaca; }
+</style>
+{% endblock %}
+
+{% macro status_badge(status) -%}
+  {% if status == "pending" %}<span class="fly-badge warn">Waiting for review</span>
+  {% elif status == "active" %}<span class="fly-badge ok">Verified</span>
+  {% elif status == "suspended" %}<span class="fly-badge muted">Suspended</span>
+  {% else %}<span class="fly-badge muted">Rejected</span>{% endif %}
+{%- endmacro %}
+
+{% block body %}
+<div class="fly-wrap">
+
+  <div class="fly-head">
+    <div>
+      <h1>Company portals</h1>
+      <p>A verified portal gets a join code, and its admins can see their members' trips and expenses.
+         Check that the person asking really works at the company before you verify it.</p>
+    </div>
+  </div>
+
+  {% set pending = rows | selectattr("company._status", "equalto", "pending") | list %}
+  {% set decided = rows | rejectattr("company._status", "equalto", "pending") | list %}
+
+  <div class="fly-section-title">Waiting for review · {{ pending | length }}</div>
+  {% for row in pending %}
+    {% set c = row.company %}
+    <div class="fly-panel fly-portal" id="portal-{{ c.id }}">
+      <div class="fly-portal-top">
+        <div>
+          <p class="fly-portal-name">{{ c._name }} {{ status_badge(c._status) }}</p>
+          <div class="fly-portal-sub">
+            {% if row.website %}<a href="https://{{ c._domain }}" target="_blank" rel="noopener noreferrer">{{ c._domain }}</a> · {% endif %}
+            asked {{ c._created_at.strftime('%b %-d, %Y') if c._created_at else '' }}
+          </div>
+        </div>
+        <div class="fly-portal-actions">
+          <button class="fly-act primary" onclick="decide('{{ c.id }}', 'verify', '{{ c._name | e }}')">Verify</button>
+          <button class="fly-act danger" onclick="decide('{{ c.id }}', 'reject', '{{ c._name | e }}')">Reject</button>
+        </div>
+      </div>
+      <dl class="fly-facts">
+        <div><dt>Asked by</dt><dd>{{ row.requester.name if row.requester else 'Deleted account' }}</dd></div>
+        <div><dt>Their email</dt><dd>{{ row.requester.email if row.requester else '—' }}</dd></div>
+        <div><dt>Their role there</dt><dd>{{ row.requester_title or '—' }}</dd></div>
+        <div><dt>Team size</dt><dd>{{ row.team_size or '—' }}</dd></div>
+      </dl>
+      {% if row.email_matches %}
+        <div class="fly-check ok">✓ Their email is at {{ row.email_domain }}, the company's own domain.</div>
+      {% else %}
+        <div class="fly-check warn">! Their email is at {{ row.email_domain or 'an unknown domain' }}, not {{ c._domain }}. Confirm they work there before verifying.</div>
+      {% endif %}
+      {% if row.duplicate_of %}
+        <div class="fly-check warn">! A verified portal named “{{ row.duplicate_of._name }}” already exists. This may be a duplicate or an impersonation.</div>
+      {% endif %}
+      {% if row.note %}<div class="fly-note">“{{ row.note }}”</div>{% endif %}
+    </div>
+  {% else %}
+    <div class="fly-panel fly-empty">Nothing waiting. New requests from the app show up here.</div>
+  {% endfor %}
+
+  <div class="fly-section-title">Decided · {{ decided | length }}</div>
+  {% for row in decided %}
+    {% set c = row.company %}
+    <div class="fly-panel fly-portal" id="portal-{{ c.id }}">
+      <div class="fly-portal-top">
+        <div>
+          <p class="fly-portal-name">{{ c._name }} {{ status_badge(c._status) }}</p>
+          <div class="fly-portal-sub">
+            {{ c._domain }}
+            {% if c._reviewed_at %} · decided {{ c._reviewed_at.strftime('%b %-d, %Y') }}{% if row.reviewer %} by {{ row.reviewer.name }}{% endif %}{% endif %}
+          </div>
+        </div>
+        <div class="fly-portal-actions">
+          {% if c._status == "active" %}
+            <button class="fly-act danger" onclick="decide('{{ c.id }}', 'suspend', '{{ c._name | e }}')">Suspend</button>
+          {% elif c._status == "suspended" %}
+            <button class="fly-act" onclick="decide('{{ c.id }}', 'reactivate', '{{ c._name | e }}')">Reactivate</button>
+          {% endif %}
+        </div>
+      </div>
+      {% if c._status in ("active", "suspended") %}
+        <dl class="fly-facts">
+          <div><dt>Join code</dt><dd class="fly-code">{{ row.code or '—' }}</dd></div>
+          <div><dt>Members</dt><dd>{{ row.member_count }}</dd></div>
+          <div><dt>Admins</dt><dd>{% for a in row.admins %}{{ a.full_name or a.email }}{% if not loop.last %}, {% endif %}{% else %}None{% endfor %}</dd></div>
+          <div><dt>Asked by</dt><dd>{{ row.requester.email if row.requester else '—' }}</dd></div>
+        </dl>
+        {% if c._status == "suspended" %}<div class="fly-note">Suspended: nobody can join, and its admins can't see members' trips or expenses.{% if c._review_note %} Note: {{ c._review_note }}{% endif %}</div>{% endif %}
+      {% elif c._review_note %}
+        <div class="fly-note">Reason given: {{ c._review_note }}</div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="fly-panel fly-empty">No portals verified yet.</div>
+  {% endfor %}
+
+</div>
+
+<div id="fly-toast" role="status" aria-live="polite"></div>
+
+<script>
+  const toast = document.getElementById('fly-toast');
+  let toastTimer = null;
+  function notify(message, isError) {
+    toast.textContent = message;
+    toast.classList.toggle('err', Boolean(isError));
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 4200);
+  }
+
+  const QUESTIONS = {
+    verify: (name) => `Verify ${name}? It gets a join code, and the person who asked becomes its admin and can see members' trips and expenses.`,
+    suspend: (name) => `Suspend ${name}? Nobody can join, and its admins lose access to members' trips and expenses until it's reactivated.`,
+    reactivate: (name) => `Reactivate ${name}?`,
+  };
+
+  async function decide(id, decision, name) {
+    let note = '';
+    if (decision === 'reject') {
+      note = prompt(`Why is ${name} being rejected? The person who asked is emailed this.`) || '';
+      if (!note.trim()) return;
+    } else if (!confirm(QUESTIONS[decision](name))) {
+      return;
+    } else if (decision === 'suspend') {
+      note = prompt('Optional note (kept on the record):') || '';
+    }
+    document.querySelectorAll(`#portal-${id} button`).forEach((b) => { b.disabled = true; });
+    try {
+      const response = await fetch(`/companies/${id}/${decision}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        notify(body.error || 'That didn’t work.', true);
+        document.querySelectorAll(`#portal-${id} button`).forEach((b) => { b.disabled = false; });
+        return;
+      }
+      notify(body.message || 'Done');
+      setTimeout(() => window.location.reload(), 1400);
+    } catch (err) {
+      notify('Could not reach the backend.', true);
+      document.querySelectorAll(`#portal-${id} button`).forEach((b) => { b.disabled = false; });
+    }
+  }
+</script>
+{% endblock %}

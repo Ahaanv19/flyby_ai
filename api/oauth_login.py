@@ -73,6 +73,21 @@ EMAIL_PATTERN = re.compile(r"^[^@\s#]+@[^@\s#]+\.[^@\s#]+$")
 # single worker (see the Dockerfile); with several, use a shared store.
 _redeemed_codes = {}
 
+# Calendar access granted during a sign-in, waiting for the app to collect it
+# with its one-time code. Never put in a URL; held for the code's lifetime only.
+_calendar_handoffs = {}
+
+# What signing in asks for on top of identity, so the calendar of the account
+# the traveler signs in with is connected in the same step. The same scopes the
+# separate "Connect calendar" flow asks for (api.google_calendar /
+# api.outlook_calendar), so the app registrations need nothing new.
+CALENDAR_SCOPES = {
+    "google": "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
+    "microsoft": "offline_access Calendars.Read Calendars.ReadWrite",
+}
+# The app's name for each provider's calendar.
+CALENDAR_PROVIDER = {"google": "google", "microsoft": "outlook"}
+
 
 class SignInError(Exception):
     """A sign-in that can't complete, with a message fit to show the person."""
@@ -141,19 +156,31 @@ def _authorize_redirect(provider_name, flow, link_user_uuid=None):
         raise SignInError(f"Signing in with {PROVIDER_NAMES.get(provider_name, provider_name)} isn't set up yet.")
 
     nonce = secrets.token_urlsafe(24)
+    # Signing in to the app also connects that account's calendar. Not when
+    # linking a sign-in method from Settings (that is about how to sign in, not
+    # which calendar to read), and not for the admin console.
+    with_calendar = flow == "app" and not link_user_uuid
     state = STATE_PREFIX + _serializer().dumps(
-        {"p": provider_name, "f": flow, "n": nonce, "l": link_user_uuid}, salt="oauth-login-state")
+        {"p": provider_name, "f": flow, "n": nonce, "l": link_user_uuid, "c": with_calendar},
+        salt="oauth-login-state")
+    scope = provider["scope"]
+    if with_calendar:
+        scope = f"{scope} {CALENDAR_SCOPES[provider_name]}"
     params = {
         "client_id": provider["client_id"],
         "redirect_uri": provider["redirect_uri"],
         "response_type": "code",
-        "scope": provider["scope"],
+        "scope": scope,
         "state": state,
         "nonce": nonce,
         # Always show the account chooser, so someone signed in to several
         # Google or Microsoft accounts picks the one they mean.
         "prompt": "select_account",
     }
+    if with_calendar and provider_name == "google":
+        # Google only hands out a refresh token — what keeps the calendar
+        # readable after the first hour — when it shows the consent screen.
+        params.update(access_type="offline", prompt="consent select_account", include_granted_scopes="true")
     return f"{provider['authorize_url']}?{urlencode(params)}", nonce
 
 
@@ -252,9 +279,10 @@ def complete_login():
         if provider is None:
             raise SignInError("This sign-in method isn't available.")
 
-        claims = _exchange_code(provider, request.args.get("code", ""), payload["n"])
+        claims, tokens = _exchange_code(provider, request.args.get("code", ""), payload["n"])
         person = _person_from_claims(provider_name, claims, provider)
         user, outcome = _resolve_user(provider_name, person, payload.get("l"))
+        calendar = _calendar_from(provider_name, tokens, person) if payload.get("c") else None
     except SignInError as error:
         AuditLog.record("unknown", "oauth_login_failure", False, reason=str(error)[:200])
         if linking and flow == "app":
@@ -263,8 +291,9 @@ def complete_login():
             return _clear_cookie(redirect(f"{_app_url()}/settings?{urlencode({'signin_error': str(error)})}"))
         return _clear_cookie(_fail(flow, str(error)))
 
-    AuditLog.record(user.uuid, f"oauth_{outcome}", True, provider=provider_name)
-    return _clear_cookie(_succeed(flow, user, provider_name, outcome))
+    AuditLog.record(user.uuid, f"oauth_{outcome}", True, provider=provider_name,
+                    calendar_connected=bool(calendar))
+    return _clear_cookie(_succeed(flow, user, provider_name, outcome, calendar))
 
 
 def _exchange_code(provider, code, nonce):
@@ -286,7 +315,8 @@ def _exchange_code(provider, code, nonce):
     if response.status_code >= 300:
         current_app.logger.warning("OAuth token exchange failed %s: %s", response.status_code, response.text[:300])
         raise SignInError("The sign-in couldn't be completed. Please try again.")
-    id_token = (response.json() or {}).get("id_token")
+    tokens = response.json() or {}
+    id_token = tokens.get("id_token")
     if not id_token:
         raise SignInError("The sign-in didn't include your identity. Please try again.")
 
@@ -303,7 +333,28 @@ def _exchange_code(provider, code, nonce):
         raise SignInError("The sign-in came from an unexpected issuer.")
     if provider["name"] == "microsoft" and issuer != f"https://login.microsoftonline.com/{claims.get('tid')}/v2.0":
         raise SignInError("The sign-in came from an unexpected issuer.")
-    return claims
+    return claims, tokens
+
+
+def _calendar_from(provider_name, tokens, person):
+    """
+    The calendar connection a sign-in granted, or None.
+
+    Google lets the person untick calendar access on the consent screen, and
+    either provider may grant less than was asked; sign-in still succeeds then,
+    just without a calendar. Only a grant that really includes calendar access
+    is handed on.
+    """
+    access_token = tokens.get("access_token")
+    granted = (tokens.get("scope") or "").lower()
+    if not access_token or "calendar" not in granted:
+        return None
+    return {
+        "provider": CALENDAR_PROVIDER[provider_name],
+        "accessToken": access_token,
+        "refreshToken": tokens.get("refresh_token"),
+        "email": person.get("email"),
+    }
 
 
 def _decode_jwt_payload(token):
@@ -397,7 +448,7 @@ def _resolve_user(provider_name, person, link_user_uuid):
 # Landing
 # ---------------------------------------------------------------------------
 
-def _succeed(flow, user, provider_name, outcome):
+def _succeed(flow, user, provider_name, outcome, calendar=None):
     if flow == "console":
         from flask_login import login_user
         login_user(user)
@@ -405,8 +456,11 @@ def _succeed(flow, user, provider_name, outcome):
         return redirect(url_for("account", linked=provider_name) if outcome == "linked" else url_for("account"))
     if outcome == "linked":
         return redirect(f"{_app_url()}/settings?{urlencode({'signin_linked': provider_name})}")
+    jti = secrets.token_urlsafe(12)
+    if calendar:
+        _calendar_handoffs[jti] = (time.time(), calendar)
     code = _serializer().dumps(
-        {"u": user.uuid, "j": secrets.token_urlsafe(12), "s": outcome == "signup"}, salt="oauth-login-code")
+        {"u": user.uuid, "j": jti, "s": outcome == "signup"}, salt="oauth-login-code")
     return redirect(f"{_app_url()}/signed-in?{urlencode({'login_code': code})}")
 
 
@@ -427,19 +481,27 @@ def _clear_cookie(response):
 # ---------------------------------------------------------------------------
 
 def redeem_login_code(code):
-    """Return ``(user, is_new_account)`` for a valid, unused code — or ``(None, False)``."""
+    """
+    Return ``(user, is_new_account, calendar)`` for a valid, unused code — or
+    ``(None, False, None)``. ``calendar`` is the calendar connection granted
+    while signing in, when there was one.
+    """
     try:
         data = _serializer().loads(code or "", salt="oauth-login-code", max_age=CODE_MAX_AGE)
     except (BadSignature, SignatureExpired):
-        return None, False
+        return None, False, None
     now = time.time()
     for jti, used_at in list(_redeemed_codes.items()):
         if now - used_at > CODE_MAX_AGE * 2:
             del _redeemed_codes[jti]
+    for jti, (stored_at, _) in list(_calendar_handoffs.items()):
+        if now - stored_at > CODE_MAX_AGE * 2:
+            del _calendar_handoffs[jti]
     if data.get("j") in _redeemed_codes:
-        return None, False
+        return None, False, None
     _redeemed_codes[data["j"]] = now
-    return User.by_uuid(data.get("u")), bool(data.get("s"))
+    handoff = _calendar_handoffs.pop(data["j"], None)
+    return User.by_uuid(data.get("u")), bool(data.get("s")), (handoff[1] if handoff else None)
 
 
 @oauth_login_api.route("/identities", methods=["GET"])

@@ -131,25 +131,19 @@ def _provision_account(user, account_mode=None):
     """
     Give a new account everything it needs to work on first load.
 
-    Creates the profile, RBAC role and default travel preferences, and attaches
-    a work-email user to the workspace for their domain. Runs on every sign-in
-    too, so an account created before a feature existed is repaired on next use.
+    Creates the profile, RBAC role and default travel preferences. Runs on every
+    sign-in too, so an account created before a feature existed is repaired on
+    next use.
+
+    Nobody is put into a company here. That used to happen by email domain —
+    everyone @acme.com landed in an "Acme" workspace nobody had set up or
+    verified. Now that a company's admins can see its members' trips and
+    expenses, membership only comes from joining a verified company portal
+    with its code (api.company_api).
     """
     profile = user.ensure_profile()
     UserRole.sync_from_user(user)
     TravelPreference.for_user(user.uuid)
-
-    domain = user.email.split("@")[-1].lower() if "@" in user.email else ""
-    is_personal = (not domain) or domain in PERSONAL_EMAIL_DOMAINS or account_mode == "personal"
-
-    if profile and not profile.company_id and not is_personal:
-        company = Company.for_domain(domain, name=domain.split(".")[0].title())
-        if company:
-            profile.company_id = company.id
-            try:
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
     return profile
 
 
@@ -282,7 +276,7 @@ def _oauth_code_grant():
     """
     from api.oauth_login import redeem_login_code
     data = request.get_json(silent=True) or {}
-    user, is_new_account = redeem_login_code(data.get("code") or "")
+    user, is_new_account, calendar = redeem_login_code(data.get("code") or "")
     if user is None:
         return _error("That sign-in has expired. Please try again.", 400, "invalid_grant")
 
@@ -300,6 +294,11 @@ def _oauth_code_grant():
     # Lets the app send someone who just signed up through the same setup steps
     # an email sign-up gets.
     session["new_account"] = is_new_account
+    if calendar:
+        # The calendar of the account they signed in with, connected in the
+        # same step. The app keeps these the way it keeps a calendar connected
+        # from Settings.
+        session["calendar"] = calendar
     return jsonify(session), 200
 
 
