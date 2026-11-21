@@ -6,10 +6,24 @@
 #   sudo nginx -t && sudo systemctl restart nginx
 #   sudo certbot --nginx        # adds the 443/TLS block automatically
 #
+# Already installed and certbot has run? Don't copy this file over the live one
+# (that would drop certbot's TLS lines). Edit the live file instead: add the
+# `map` block below at the top, and make the preflight lines match.
+#
 # The frontend is served from GitHub Pages on a DIFFERENT origin
-# (https://rbrandt2006-hash.github.io), so every API call is cross-origin.
-# Preflight (OPTIONS) is answered here; Flask-CORS sets the headers on the
-# actual responses.
+# (https://rbrandt2006-hash.github.io, and https://flybyai.net once the custom
+# domain is on), so every API call is cross-origin. Preflight (OPTIONS) is
+# answered here; Flask-CORS sets the headers on the actual responses.
+
+# Which sites may call the API from a browser. A preflight from any other
+# origin gets no Allow-Origin header, so the browser refuses it. Keep this in
+# step with the origins in __init__.py (and FRONTEND_ORIGINS).
+map $http_origin $flyby_cors_origin {
+    default                              "";
+    "https://rbrandt2006-hash.github.io" $http_origin;
+    "https://flybyai.net"                $http_origin;
+    "https://www.flybyai.net"            $http_origin;
+}
 
 server {
     listen 80;
@@ -35,12 +49,13 @@ server {
         proxy_read_timeout    120s;
         proxy_send_timeout    120s;
 
-        # Preflighted requests
+        # Preflighted requests: echo the caller's origin when it is one of ours.
         if ($request_method = OPTIONS) {
             add_header "Access-Control-Allow-Credentials" "true" always;
-            add_header "Access-Control-Allow-Origin"  "https://rbrandt2006-hash.github.io" always;
+            add_header "Access-Control-Allow-Origin"  $flyby_cors_origin always;
+            add_header "Vary" "Origin" always;
             add_header "Access-Control-Allow-Methods" "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD" always;
-            add_header "Access-Control-Allow-MaxAge" 600 always;
+            add_header "Access-Control-Max-Age" 600 always;
             add_header "Access-Control-Allow-Headers" "Authorization, Origin, X-Origin, X-Requested-With, Content-Type, Accept, Prefer, X-Client-Info" always;
             return 204;
         }

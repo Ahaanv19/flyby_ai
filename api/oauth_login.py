@@ -52,6 +52,7 @@ import requests
 from flask import Blueprint, current_app, g, jsonify, make_response, redirect, request, url_for
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from api.app_address import app_base, configured_app_url
 from api.jwt_authorize import token_required
 from model.identity import PROVIDER_NAMES, UserIdentity
 from model.security import AuditLog
@@ -137,8 +138,9 @@ def _serializer():
     return URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
 
 
-def _app_url():
-    return (current_app.config.get("APP_URL") or "").rstrip("/")
+def _app_url(base=None):
+    """Where in the app to land: the site the sign-in started from, else APP_URL."""
+    return (base or configured_app_url()).rstrip("/")
 
 
 def _secure_request():
@@ -149,8 +151,14 @@ def _secure_request():
 # Start
 # ---------------------------------------------------------------------------
 
-def _authorize_redirect(provider_name, flow, link_user_uuid=None):
-    """Build the redirect to the provider, and the cookie that binds it to this browser."""
+def _authorize_redirect(provider_name, flow, link_user_uuid=None, return_to=None):
+    """
+    Build the redirect to the provider, and the cookie that binds it to this browser.
+
+    ``return_to`` is the app address the sign-in started from (GitHub Pages,
+    flybyai.net, localhost); it is checked against Flyby's own addresses and
+    carried in the signed state so the browser comes back to the same site.
+    """
     provider = _provider(provider_name)
     if provider is None:
         raise SignInError(f"Signing in with {PROVIDER_NAMES.get(provider_name, provider_name)} isn't set up yet.")
@@ -161,7 +169,8 @@ def _authorize_redirect(provider_name, flow, link_user_uuid=None):
     # which calendar to read), and not for the admin console.
     with_calendar = flow == "app" and not link_user_uuid
     state = STATE_PREFIX + _serializer().dumps(
-        {"p": provider_name, "f": flow, "n": nonce, "l": link_user_uuid, "c": with_calendar},
+        {"p": provider_name, "f": flow, "n": nonce, "l": link_user_uuid, "c": with_calendar,
+         "r": app_base(return_to) if flow == "app" else None},
         salt="oauth-login-state")
     scope = provider["scope"]
     if with_calendar:
@@ -204,10 +213,11 @@ def authorize():
         if not current_user.is_authenticated:
             return redirect(url_for("login"))
         link_user = current_user.uuid
+    return_to = request.args.get("return_to")
     try:
-        url, nonce = _authorize_redirect(provider_name, flow, link_user)
+        url, nonce = _authorize_redirect(provider_name, flow, link_user, return_to)
     except SignInError as error:
-        return _fail(flow, str(error))
+        return _fail(flow, str(error), app_base(return_to))
     return _with_nonce_cookie(redirect(url), nonce)
 
 
@@ -227,7 +237,7 @@ def authorize_link():
     if not user:
         return jsonify({"error": "Sign in first."}), 401
     try:
-        url, nonce = _authorize_redirect(provider_name, "app", user.uuid)
+        url, nonce = _authorize_redirect(provider_name, "app", user.uuid, data.get("return_to"))
     except SignInError as error:
         return jsonify({"error": str(error)}), 400
     ticket = _serializer().dumps({"u": url, "n": nonce}, salt="oauth-login-go")
@@ -254,7 +264,7 @@ def is_login_state(state):
 
 def complete_login():
     """Handle the provider's redirect back for a sign-in."""
-    flow, linking = "app", False
+    flow, linking, base = "app", False, None
     try:
         try:
             payload = _serializer().loads(
@@ -266,6 +276,7 @@ def complete_login():
             raise SignInError("That sign-in link isn't valid. Please try again.")
         flow = payload.get("f") or "app"
         linking = bool(payload.get("l"))
+        base = app_base(payload.get("r")) if payload.get("r") else None
 
         if request.args.get("error"):
             raise SignInError("Sign-in was cancelled.")
@@ -288,12 +299,12 @@ def complete_login():
         if linking and flow == "app":
             # Connecting from Settings while signed in: go back there, not to
             # the sign-in error page.
-            return _clear_cookie(redirect(f"{_app_url()}/settings?{urlencode({'signin_error': str(error)})}"))
-        return _clear_cookie(_fail(flow, str(error)))
+            return _clear_cookie(redirect(f"{_app_url(base)}/settings?{urlencode({'signin_error': str(error)})}"))
+        return _clear_cookie(_fail(flow, str(error), base))
 
     AuditLog.record(user.uuid, f"oauth_{outcome}", True, provider=provider_name,
                     calendar_connected=bool(calendar))
-    return _clear_cookie(_succeed(flow, user, provider_name, outcome, calendar))
+    return _clear_cookie(_succeed(flow, user, provider_name, outcome, calendar, base))
 
 
 def _exchange_code(provider, code, nonce):
@@ -448,26 +459,26 @@ def _resolve_user(provider_name, person, link_user_uuid):
 # Landing
 # ---------------------------------------------------------------------------
 
-def _succeed(flow, user, provider_name, outcome, calendar=None):
+def _succeed(flow, user, provider_name, outcome, calendar=None, base=None):
     if flow == "console":
         from flask_login import login_user
         login_user(user)
         user.touch_login()
         return redirect(url_for("account", linked=provider_name) if outcome == "linked" else url_for("account"))
     if outcome == "linked":
-        return redirect(f"{_app_url()}/settings?{urlencode({'signin_linked': provider_name})}")
+        return redirect(f"{_app_url(base)}/settings?{urlencode({'signin_linked': provider_name})}")
     jti = secrets.token_urlsafe(12)
     if calendar:
         _calendar_handoffs[jti] = (time.time(), calendar)
     code = _serializer().dumps(
         {"u": user.uuid, "j": jti, "s": outcome == "signup"}, salt="oauth-login-code")
-    return redirect(f"{_app_url()}/signed-in?{urlencode({'login_code': code})}")
+    return redirect(f"{_app_url(base)}/signed-in?{urlencode({'login_code': code})}")
 
 
-def _fail(flow, message):
+def _fail(flow, message, base=None):
     if flow == "console":
         return redirect(url_for("login", oauth_error=message))
-    return redirect(f"{_app_url()}/signed-in?{urlencode({'error': message})}")
+    return redirect(f"{_app_url(base)}/signed-in?{urlencode({'error': message})}")
 
 
 def _clear_cookie(response):

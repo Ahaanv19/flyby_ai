@@ -55,6 +55,11 @@ _default_origins = [
     # origin, so the local backend must allow it (a Pages-hosted site can talk
     # to a localhost backend because browsers treat localhost as trustworthy).
     'https://rbrandt2006-hash.github.io',
+    # Flyby's own domain, for when the app moves there (flybyai.net, with the
+    # backend at api.flybyai.net). Allowed ahead of time so the switch is DNS
+    # and settings only.
+    'https://flybyai.net',
+    'https://www.flybyai.net',
 ]
 _extra_origins = [
     o.strip() for o in os.environ.get('FRONTEND_ORIGINS', '').split(',') if o.strip()

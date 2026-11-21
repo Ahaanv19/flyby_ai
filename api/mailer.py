@@ -192,6 +192,20 @@ def _ensure_worker():
             _worker.start()
 
 
+# Domains set aside for examples and testing (RFC 2606 / 6761). Nothing can be
+# delivered to them, so a real mail server only bounces the message back to
+# Flyby's own inbox, and bounces count against the sender's reputation. Test
+# accounts use them, so skip them unless mail goes to a local test server.
+_RESERVED_DOMAINS = ("example.com", "example.net", "example.org")
+_RESERVED_SUFFIXES = (".example", ".test", ".invalid", ".localhost")
+
+
+def _undeliverable(address):
+    domain = address.rsplit("@", 1)[-1].lower().rstrip(".")
+    return (domain in _RESERVED_DOMAINS or domain.endswith(_RESERVED_SUFFIXES)
+            or any(domain.endswith("." + d) for d in _RESERVED_DOMAINS))
+
+
 def _prepare(to, subject, text, html, kind, user_id):
     to = (to or "").strip()
     if not ADDRESS.match(to):
@@ -199,6 +213,8 @@ def _prepare(to, subject, text, html, kind, user_id):
     if not is_configured():
         return None, "Email isn't set up on this server."
     settings = _settings()
+    if _undeliverable(to) and (settings.get("host") or "").lower() not in ("localhost", "127.0.0.1"):
+        return None, "That address is on a domain reserved for testing; nothing can be delivered there."
     return {
         "settings": settings, "to": to, "kind": kind, "user_id": user_id,
         "message": _build(settings, to, subject, text, html),

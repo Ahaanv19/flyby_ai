@@ -620,7 +620,9 @@ def set_user_role(user_id):
 
 def _oauth_redirect(provider):
     from urllib.parse import urlencode
-    app_url = (current_app.config.get('APP_URL') or '').rstrip('/')
+    from api.app_address import calendar_return_base
+    # Back to the app address the traveler started from (see api.app_address).
+    app_url = calendar_return_base(request.args.get('state'))
     error = request.args.get('error')
     code = request.args.get('code')
     params = {f'{provider}_error': error} if error else {f'{provider}_code': code or ''}

@@ -14,6 +14,7 @@ Without MS_CLIENT_ID / MS_CLIENT_SECRET every route reports
 
 from flask import Blueprint, g, jsonify, request
 
+from api.app_address import calendar_state
 from api.jwt_authorize import token_required
 from api.outlook_calendar import (build_auth_url, create_event, exchange_code,
                                   get_account_email, is_configured, list_events,
@@ -37,7 +38,9 @@ def auth_url():
         return jsonify({"configured": False, "authUrl": None,
                         "error": "Outlook sync isn't set up yet."}), 200
     user = getattr(g, "current_user", None)
-    state = str(getattr(user, "uuid", None) or getattr(user, "id", "anonymous"))
+    # The state carries which app address to come back to (GitHub Pages,
+    # flybyai.net, localhost), signed so it can't be changed on the way.
+    state = calendar_state(user, (request.get_json(silent=True) or {}).get("returnTo"))
     return jsonify({"configured": True, "authUrl": build_auth_url(state)}), 200
 
 
