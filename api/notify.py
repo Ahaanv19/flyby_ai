@@ -228,3 +228,21 @@ def member_joined(company, member):
         sent = _send(admin, "member_joined", templates.member_joined(
             admin.name, company._name, member.name, member.email, _app_url())) or sent
     return sent
+
+
+# ---------------------------------------------------------------------------
+# Expense approval
+# ---------------------------------------------------------------------------
+
+@_guard
+def expense_submitted(approver, member, company, expense, note=None):
+    """A traveler sent an expense to this company admin to review. Always sent."""
+    return _send(approver, "expense_submitted", templates.expense_submitted(
+        approver.name, member.name, company._name, expense, note, _app_url()))
+
+
+@_guard
+def expense_decided(member, expense, decision, reviewer_name, note=None):
+    """The traveler hears that their expense was approved or sent back. Always sent."""
+    return _send(member, f"expense_{decision}", templates.expense_decided(
+        member.name, expense, decision, reviewer_name, note, _app_url()))

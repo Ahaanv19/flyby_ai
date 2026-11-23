@@ -63,11 +63,44 @@ class Expense(db.Model, RowMixin):
         "approved_at": parse_dt,
     }
 
+    # -- approval by a company admin --------------------------------------
+    #
+    # Sending an expense to a manager in the company portal (``/api/company``)
+    # records an approval request in ``_client_data["approval"]``:
+    #
+    #   approverId, approverName, companyId, sentAt, note, includeReceipt,
+    #   decision (None | "approved" | "returned"), decidedAt, decidedById,
+    #   decidedByName, decisionNote
+    #
+    # Only the company endpoints write it. The app saves its expenses by
+    # uploading the whole list, so an upload must not be able to approve an
+    # expense, name a different approver, or put back a status from before
+    # the manager decided (a tab still open from yesterday would do exactly
+    # that). Once a request exists, the status belongs to it too; the
+    # traveler can still dispute the charge.
+
+    SERVER_KEYS = ("approval",)
+    APPROVAL_COPIES = ("supervisorSentAt", "supervisorName", "supervisorId")
+
+    @property
+    def approval(self):
+        value = (self._client_data or {}).get("approval")
+        return value if isinstance(value, dict) else None
+
     # -- rich client view -------------------------------------------------
 
     def read_client(self):
         """Return the expense in the shape the React app uses."""
         data = dict(self._client_data or {})
+        approval = self.approval
+        if approval:
+            data["supervisorId"] = approval.get("approverId")
+            data["supervisorName"] = approval.get("approverName")
+            if approval.get("decision") == "returned":
+                # Sent back: no longer with the manager.
+                data.pop("supervisorSentAt", None)
+            else:
+                data["supervisorSentAt"] = approval.get("sentAt")
         data.update({
             "id": self.client_id,
             "amount": self._amount or 0,
@@ -90,6 +123,15 @@ class Expense(db.Model, RowMixin):
         """Write an expense from the app's rich shape, keeping columns in sync."""
         if not isinstance(data, dict):
             return self
+
+        # The approval request is the server's record (see above); what the
+        # app sends for it is a copy that may be out of date.
+        data = {key: value for key, value in data.items() if key not in self.SERVER_KEYS}
+        if self.approval:
+            for key in self.APPROVAL_COPIES:
+                data.pop(key, None)
+            if data.get("status") != "disputed":
+                data.pop("status", None)
 
         merged = dict(self._client_data or {})
         merged.update(data)

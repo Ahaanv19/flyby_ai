@@ -384,3 +384,52 @@ def member_joined(admin_name, company_name, member_name, member_email, app_url=N
         _button("Open company dashboard", f"{app_url}/company") if app_url else "")
     return subject, "\n".join(text_lines), _page("Someone joined your company", blocks,
                                                  footer="Sent to every admin of the company.")
+
+
+# ---------------------------------------------------------------------------
+# Expense approval
+# ---------------------------------------------------------------------------
+
+def _expense_rows(expense, note=None, note_label="Note"):
+    """The facts about an expense a manager or traveler needs to recognise it."""
+    category = (expense.get("category") or "").strip()
+    return [
+        ("Expense", expense.get("merchant") or expense.get("description")),
+        ("Amount", _money(expense.get("amount"), expense.get("currency") or "USD")),
+        ("Date", _moment(str(expense.get("date") or ""))),
+        ("Trip", expense.get("tripName")),
+        ("Category", category[:1].upper() + category[1:] if category else ""),
+        (note_label, (note or "").strip()),
+    ]
+
+
+def expense_submitted(approver_name, member_name, company_name, expense, note=None, app_url=None):
+    subject = f"{member_name} sent you an expense to approve"
+    intro = f"Hi {_first_name(approver_name)}, {member_name} sent you an expense to review for {company_name}."
+    rows = _expense_rows(expense, note, f"Note from {_first_name(member_name)}")
+    text_lines = [intro, ""] + [f"{label}: {value}" for label, value in rows if value] + (
+        ["", f"Review it: {app_url}/company"] if app_url else [])
+    blocks = _paragraph(intro) + _rows(rows) + (
+        _button("Review in Flyby", f"{app_url}/company") if app_url else "")
+    return subject, "\n".join(text_lines), _page("An expense is waiting for you", blocks,
+                                                 footer=f"Sent because you're an admin of {company_name} on {BRAND}.")
+
+
+def expense_decided(member_name, expense, decision, reviewer_name, note=None, app_url=None):
+    merchant = expense.get("merchant") or expense.get("description") or "your"
+    amount = _money(expense.get("amount"), expense.get("currency") or "USD")
+    if decision == "approved":
+        subject = f"{reviewer_name} approved your {merchant} expense"
+        heading = "Expense approved"
+        intro = f"Hi {_first_name(member_name)}, {reviewer_name} approved your {merchant} expense ({amount})."
+    else:
+        subject = f"{reviewer_name} sent back your {merchant} expense"
+        heading = "Expense sent back"
+        intro = (f"Hi {_first_name(member_name)}, {reviewer_name} sent back your {merchant} expense ({amount}). "
+                 "You can change it and send it again from Expenses.")
+    rows = _expense_rows(expense, note, f"Note from {_first_name(reviewer_name)}")
+    text_lines = [intro, ""] + [f"{label}: {value}" for label, value in rows if value] + (
+        ["", f"Your expenses: {app_url}/expenses"] if app_url else [])
+    blocks = _paragraph(intro) + _rows(rows) + (
+        _button("Open expenses", f"{app_url}/expenses") if app_url else "")
+    return subject, "\n".join(text_lines), _page(heading, blocks)

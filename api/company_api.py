@@ -29,6 +29,12 @@ whose trips and expenses a company admin can read.
     POST   /api/company/members/<id>/role    (company admin) make admin / member
     DELETE /api/company/members/<id>         (company admin) remove from the company
     POST   /api/company/code                 (company admin) replace the join code
+
+    GET    /api/company/approvers            your company's admins, to send an expense to
+    POST   /api/company/expenses/<id>/send   send one of your expenses to an admin for approval
+    POST   /api/company/expenses/<id>/unsend take it back before anyone decides
+    GET    /api/company/approvals            (company admin) expenses sent for approval
+    POST   /api/company/approvals/<id>       (company admin) approve, or send back with a note
 """
 
 import re
@@ -336,6 +342,13 @@ def _expense_summary(expense):
     }
 
 
+def _waiting_on(company, expense):
+    """True when ``expense`` was sent to ``company``'s admins and nobody has decided yet."""
+    approval = expense.approval
+    return bool(approval and approval.get("companyId") == company.id and not approval.get("decision")
+                and expense._status == "submitted")
+
+
 def _real_trips(user_id):
     """
     A member's own trips, without the sample trips the app adds to a new
@@ -375,7 +388,8 @@ def members():
             "upcomingTrip": _trip_summary(upcoming[0]) if upcoming else None,
             "travelingNow": bool(upcoming and upcoming[0]._start_date and upcoming[0]._start_date <= today),
             "spend": round(sum((e._amount or 0) for e in expenses), 2),
-            "pendingExpenses": sum(1 for e in expenses if (e._status or "pending") == "pending"),
+            # Waiting for an admin to approve or send back — what "to review" means.
+            "pendingExpenses": sum(1 for e in expenses if _waiting_on(g.company, e)),
             "expenseCount": len(expenses),
         })
     rows.sort(key=lambda r: (r["role"] != "admin", (r["name"] or "").lower()))
@@ -458,6 +472,215 @@ def rotate_code():
     db.session.commit()
     AuditLog.record(g.user_id, "company_code_rotated", True, target_type="company", target_id=g.company.id)
     return jsonify({"portal": _portal_json(g.company, "admin")}), 200
+
+
+# ---------------------------------------------------------------------------
+# Expense approval: a member sends an expense to one of the company's admins
+# ---------------------------------------------------------------------------
+# The request lives on the expense (``Expense.approval``) and only these
+# endpoints change it. A member picks the admin; any admin of the company can
+# decide, since admins already see every member's expenses. Nobody decides
+# their own expense.
+
+def _display_name(profile):
+    return profile.full_name or (profile.email or "").split("@")[0]
+
+
+def _own_expense(expense_id):
+    """The caller's expense with the app's id ``expense_id``, or None."""
+    expense_id = str(expense_id or "").strip()
+    if not expense_id:
+        return None
+    # Stored ids start with the app's id (see RowMixin.storage_id).
+    candidates = (Expense.query.filter_by(_user_id=g.user_id)
+                  .filter(Expense.id.startswith(expense_id, autoescape=True)).all())
+    return next((row for row in candidates if row.client_id == expense_id), None)
+
+
+def _admin_profiles(company):
+    return Profile.query.filter_by(_company_id=company.id, _company_role="admin").all()
+
+
+def _approval_json(expense, owner_profile):
+    approval = expense.approval or {}
+    return {
+        "id": expense.id,
+        "expense": _expense_summary(expense),
+        "member": {"id": owner_profile.user_id, "name": _display_name(owner_profile),
+                   "email": owner_profile.email} if owner_profile else None,
+        "approverId": approval.get("approverId"),
+        "approverName": approval.get("approverName"),
+        "sentToYou": approval.get("approverId") == g.user_id,
+        "sentAt": approval.get("sentAt"),
+        "note": approval.get("note"),
+        "includeReceipt": approval.get("includeReceipt", True),
+        "decision": approval.get("decision"),
+        "decidedAt": approval.get("decidedAt"),
+        "decidedByName": approval.get("decidedByName"),
+        "decisionNote": approval.get("decisionNote"),
+    }
+
+
+def _iso_now():
+    return utcnow().isoformat() + "Z"
+
+
+@company_api.route('/approvers', methods=['GET'])
+@token_required()
+def approvers():
+    """Who the caller can send an expense to: their company's admins, other than themselves."""
+    profile, company, role = _membership(g.current_user)
+    if not company:
+        return jsonify({"portal": None, "role": None, "approvers": []}), 200
+    rows = [{"id": p.user_id, "name": _display_name(p), "email": p.email, "jobTitle": p.job_title}
+            for p in _admin_profiles(company) if p.user_id != g.user_id]
+    rows.sort(key=lambda r: (r["name"] or "").lower())
+    return jsonify({"portal": {"id": company.id, "name": company._name}, "role": role, "approvers": rows}), 200
+
+
+@company_api.route('/expenses/<expense_id>/send', methods=['POST'])
+@token_required()
+def send_expense(expense_id):
+    """Send one of your expenses to an admin of your company for approval."""
+    body = request.get_json(silent=True) or {}
+    profile, company, role = _membership(g.current_user)
+    if not company:
+        return _fail("Join your company in Flyby first. Expenses go to a manager in your company.",
+                     409, "not_in_company")
+    approver_id = str(body.get("approverId") or "").strip()
+    approver = Profile.query.filter_by(_user_id=approver_id, _company_id=company.id, _company_role="admin").first() \
+        if approver_id else None
+    if not approver or approver_id == g.user_id:
+        return _fail("Choose one of your company's admins.", 400, "not_an_approver")
+    expense = _own_expense(expense_id)
+    if not expense:
+        return _fail("Couldn't find that expense. If you just added it, try again in a moment.",
+                     404, "expense_not_found")
+    current = expense.approval or {}
+    if current.get("decision") == "approved":
+        return _fail(f"{current.get('decidedByName') or 'A manager'} already approved this expense.",
+                     409, "already_approved")
+
+    approver_name = _display_name(approver)
+    note = _clean(body.get("note"), 1000) or None
+    data = dict(expense._client_data or {})
+    data["approval"] = {
+        "approverId": approver.user_id,
+        "approverName": approver_name,
+        "companyId": company.id,
+        "sentAt": _iso_now(),
+        "note": note,
+        "includeReceipt": bool(body.get("includeReceipt", True)),
+        "decision": None,
+        "decidedAt": None,
+        "decidedById": None,
+        "decidedByName": None,
+        "decisionNote": None,
+    }
+    for key in Expense.APPROVAL_COPIES:
+        data.pop(key, None)
+    expense._client_data = data
+    expense._status = "submitted"
+    expense._submitted_at = utcnow()
+    expense._company_id = company.id
+    expense._approved_at = None
+    expense._approved_by = None
+    db.session.commit()
+
+    AuditLog.record(g.user_id, "expense_sent_for_approval", True, target_type="expense", target_id=expense.id,
+                    company_id=company.id, approver_id=approver.user_id)
+    approver_user = User.by_uuid(approver.user_id)
+    if approver_user:
+        notify.expense_submitted(approver_user, g.current_user, company, expense.read_client(), note)
+    return jsonify({"expense": expense.read_client()}), 200
+
+
+@company_api.route('/expenses/<expense_id>/unsend', methods=['POST'])
+@token_required()
+def unsend_expense(expense_id):
+    """Take back an expense you sent, while nobody has decided on it yet."""
+    expense = _own_expense(expense_id)
+    if not expense:
+        return _fail("Couldn't find that expense.", 404, "expense_not_found")
+    current = expense.approval or {}
+    if current.get("decision") == "approved":
+        return _fail(f"{current.get('decidedByName') or 'A manager'} already approved this expense.",
+                     409, "already_approved")
+    data = dict(expense._client_data or {})
+    data.pop("approval", None)
+    for key in Expense.APPROVAL_COPIES:
+        data.pop(key, None)
+    expense._client_data = data
+    if expense._status == "submitted":
+        expense._status = "pending"
+    expense._submitted_at = None
+    db.session.commit()
+    AuditLog.record(g.user_id, "expense_unsent", True, target_type="expense", target_id=expense.id)
+    return jsonify({"expense": expense.read_client()}), 200
+
+
+@company_api.route('/approvals', methods=['GET'])
+@token_required()
+@_company_admin
+def approvals():
+    """Expenses members have sent to this company's admins: waiting first, then recent decisions."""
+    owners = {p.user_id: p for p in _members_of(g.company)}
+    waiting, decided = [], []
+    for expense in Expense.query.filter_by(_company_id=g.company.id).all():
+        approval = expense.approval
+        # Only requests made inside this company, by someone still in it.
+        if not approval or approval.get("companyId") != g.company.id or expense._user_id not in owners:
+            continue
+        item = _approval_json(expense, owners[expense._user_id])
+        (decided if approval.get("decision") else waiting).append(item)
+    waiting.sort(key=lambda i: (not i["sentToYou"], i["sentAt"] or ""))
+    decided.sort(key=lambda i: i["decidedAt"] or "", reverse=True)
+    return jsonify({"waiting": waiting, "decided": decided[:20]}), 200
+
+
+@company_api.route('/approvals/<row_id>', methods=['POST'])
+@token_required()
+@_company_admin
+def decide_approval(row_id):
+    """Approve an expense a member sent, or send it back to them with a note."""
+    body = request.get_json(silent=True) or {}
+    decision = {"approve": "approved", "return": "returned"}.get(str(body.get("decision") or "").strip().lower())
+    if not decision:
+        return _fail('Decision must be "approve" or "return".', 400, "bad_decision")
+    expense = db.session.get(Expense, str(row_id or ""))
+    approval = expense.approval if expense else None
+    owner = (Profile.query.filter_by(_user_id=expense._user_id, _company_id=g.company.id)
+             .filter(Profile._company_role.in_(COMPANY_ROLES)).first()) if expense else None
+    if not expense or not approval or approval.get("companyId") != g.company.id or not owner:
+        return _fail("That expense isn't waiting for your company.", 404, "not_found")
+    if expense._user_id == g.user_id:
+        return _fail("Someone else in your company has to decide on your own expense.", 403, "own_expense")
+    if approval.get("decision"):
+        return _fail(f"{approval.get('decidedByName') or 'An admin'} already decided on this expense.",
+                     409, "already_decided")
+
+    reviewer_name = _display_name(g.profile)
+    note = _clean(body.get("note"), 1000) or None
+    approval = dict(approval, decision=decision, decidedAt=_iso_now(), decidedById=g.user_id,
+                    decidedByName=reviewer_name, decisionNote=note)
+    data = dict(expense._client_data or {})
+    data["approval"] = approval
+    expense._client_data = data
+    if decision == "approved":
+        expense._status = "approved"
+        expense._approved_at = utcnow()
+        expense._approved_by = g.user_id
+    else:
+        expense._status = "pending"
+        expense._submitted_at = None
+    db.session.commit()
+
+    AuditLog.record(g.user_id, f"expense_{decision}", True, target_type="expense", target_id=expense.id,
+                    company_id=g.company.id, member_id=expense._user_id)
+    member_user = User.by_uuid(expense._user_id)
+    if member_user:
+        notify.expense_decided(member_user, expense.read_client(), decision, reviewer_name, note)
+    return jsonify({"approval": _approval_json(expense, owner)}), 200
 
 
 # ---------------------------------------------------------------------------
